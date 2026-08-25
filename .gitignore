@@ -1,0 +1,4 @@
+node_modules/
+books/*/dist/*
+!books/*/dist/.gitkeep
+.DS_Store
