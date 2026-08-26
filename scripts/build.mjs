@@ -6,13 +6,12 @@ import { authorName, escapeXml, loadBook } from './lib.mjs';
 const args = process.argv.slice(2);
 const formatIndex = args.indexOf('--format');
 const format = formatIndex >= 0 ? args[formatIndex + 1] : 'all';
-const slug = args.find((x, i) => x !== '--format' && i !== formatIndex + 1);
-const { config, chapters, outputDir } = await loadBook(slug);
-const base = config.outputBaseName ?? slug;
+const { config, chapters, outputDir } = await loadBook();
+const base = config.outputBaseName ?? config.id ?? 'book';
 
+if (!['all', 'txt', 'fb2'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
 if (format === 'all' || format === 'txt') await buildTxt();
 if (format === 'all' || format === 'fb2') await buildFb2();
-if (!['all','txt','fb2'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
 
 async function buildTxt() {
   const divider = '='.repeat(72);
@@ -38,5 +37,9 @@ async function buildFb2() {
 }
 
 function toFb2(text) {
-  return text.split(/\n{2,}/).flatMap(block => block.split('\n').map(x => x.trim()).filter(Boolean)).map(line => `      <p>${escapeXml(line)}</p>`).join('\n');
+  return text
+    .split(/\n{2,}/)
+    .flatMap(block => block.split('\n').map(x => x.trim()).filter(Boolean))
+    .map(line => `      <p>${escapeXml(line)}</p>`)
+    .join('\n');
 }
