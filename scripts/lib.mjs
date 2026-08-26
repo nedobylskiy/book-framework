@@ -1,9 +1,5 @@
 import { mkdir, readFile } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const scriptsDir = dirname(fileURLToPath(import.meta.url));
-export const root = resolve(scriptsDir, '..');
+import { join, resolve, sep } from 'node:path';
 
 export function normalizeText(text) {
   return text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').trim();
@@ -13,9 +9,16 @@ export function authorName(author = {}) {
   return [author.firstName, author.middleName, author.lastName].filter(Boolean).join(' ');
 }
 
-export async function loadBook() {
-  const bookDir = root;
-  const config = JSON.parse(await readFile(join(bookDir, 'book.config.json'), 'utf8'));
+export function getBookDir() {
+  return process.cwd();
+}
+
+export async function loadConfig(bookDir = getBookDir()) {
+  return JSON.parse(await readFile(join(bookDir, 'book.config.json'), 'utf8'));
+}
+
+export async function validateBook(bookDir = getBookDir(), { readText = true } = {}) {
+  const config = await loadConfig(bookDir);
 
   if (!config.title || !authorName(config.author)) {
     throw new Error('В book.config.json необходимо указать title и author.');
@@ -54,12 +57,19 @@ export async function loadBook() {
       throw new Error(`Недопустимый путь главы: ${chapter.file}`);
     }
 
-    chapters.push({ ...chapter, number, text: normalizeText(await readFile(filePath, 'utf8')) });
+    const entry = { ...chapter, number };
+    if (readText) entry.text = normalizeText(await readFile(filePath, 'utf8'));
+    chapters.push(entry);
   }
 
+  return { bookDir, config, chapters, sourceDir };
+}
+
+export async function loadBook(bookDir = getBookDir()) {
+  const result = await validateBook(bookDir, { readText: true });
   const outputDir = join(bookDir, 'dist');
   await mkdir(outputDir, { recursive: true });
-  return { bookDir, config, chapters, outputDir };
+  return { ...result, outputDir };
 }
 
 export function escapeXml(value) {
