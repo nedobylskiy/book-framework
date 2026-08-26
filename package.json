@@ -1,10 +1,23 @@
 {
-  "name": "book-project",
-  "private": true,
+  "name": "@nedobylskiy/book-framework",
+  "version": "0.1.0",
+  "description": "CLI framework for writing, editing, validating and building book repositories",
   "type": "module",
+  "bin": {
+    "book": "bin/book.mjs"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "build:txt": "node scripts/build.mjs --format txt",
-    "build:fb2": "node scripts/build.mjs --format fb2"
-  }
+    "build": "book build",
+    "validate": "book validate"
+  },
+  "keywords": ["book", "writing", "fb2", "publishing", "cli"],
+  "license": "UNLICENSED"
 }
