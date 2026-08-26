@@ -1,0 +1,20 @@
+{
+  "id": "my-book",
+  "title": "Название книги",
+  "annotation": "Короткая аннотация произведения.",
+  "status": "draft",
+  "author": {
+    "firstName": "Имя",
+    "lastName": "Фамилия"
+  },
+  "language": "ru",
+  "buildSource": "original",
+  "outputBaseName": "my-book",
+  "genres": ["prose"],
+  "chapters": [
+    {
+      "title": "Пролог",
+      "file": "01-prologue.txt"
+    }
+  ]
+}
