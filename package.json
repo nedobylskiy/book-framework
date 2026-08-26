@@ -1,13 +1,10 @@
 {
-  "name": "book-framework",
+  "name": "book-project",
   "private": true,
   "type": "module",
   "scripts": {
-    "new": "node scripts/new-book.mjs",
     "build": "node scripts/build.mjs",
     "build:txt": "node scripts/build.mjs --format txt",
-    "build:fb2": "node scripts/build.mjs --format fb2",
-    "build:all": "node scripts/build-all.mjs",
-    "index": "node scripts/update-index.mjs"
+    "build:fb2": "node scripts/build.mjs --format fb2"
   }
 }
