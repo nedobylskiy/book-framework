@@ -11,6 +11,7 @@
   "buildSource": "original",
   "outputBaseName": "my-book",
   "genres": ["prose"],
+  "universe": null,
   "chapters": [
     {
       "title": "Пролог",

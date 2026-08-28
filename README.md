@@ -26,6 +26,7 @@ npm install --save-dev @nedobylskiy/book-framework
 
 ```sh
 npx book validate
+npx book universe
 npx book build
 npx book build --format txt
 npx book build --format fb2
@@ -48,7 +49,8 @@ CLI всегда работает с текущим каталогом книг�
     "chapter": "book new-chapter"
   },
   "devDependencies": {
-    "@nedobylskiy/book-framework": "github:nedobylskiy/book-framework"
+    "@nedobylskiy/book-framework": "github:nedobylskiy/book-framework",
+    "@my-scope/my-universe": "github:owner/my-universe"
   }
 }
 ```
@@ -138,6 +140,39 @@ manuscript/edited/10-old-cyborg.txt
 
 Правила конкретной книги имеют приоритет над общими рекомендациями фреймворка.
 
+## Вселенная как зависимость
+
+Если несколько книг используют один мир, его фундаментальные правила выносятся в отдельный репозиторий и устанавливаются в каждую книгу как npm-пакет. В `book.config.json` книга хранит не копию канона, а явную ссылку на пакет и его главный документ:
+
+```json
+{
+  "universe": {
+    "package": "@my-scope/my-universe",
+    "entry": "universe/index.md"
+  }
+}
+```
+
+Установить вселенную напрямую из GitHub можно так:
+
+```sh
+npm install --save-dev github:owner/my-universe
+```
+
+Имя в `universe.package` должно совпадать с `name` в `package.json` вселенной. `entry` опционален; по умолчанию используется `universe/index.md`.
+
+Перед написанием, редактурой и проверкой конфликтов человек или ИИ обязан прочитать основной документ вселенной и связанные с задачей файлы пакета. Найти установленный основной документ можно командой:
+
+```sh
+npx book universe
+```
+
+`book validate` также проверяет наличие пакета и указанного файла. Если книга самостоятельная, используйте `"universe": null` или не указывайте поле.
+
+Во вселенную попадают только фундаментальные правила и факты, общие для нескольких произведений. Персонажи конкретной книги, её сюжет, сцены и локальная хронология остаются в `docs/` книжного репозитория. Изменение канона делается в репозитории вселенной, выпускается новой версией и затем обновляется в книгах осознанно.
+
+Готовая спецификация и шаблон пакета: [nedobylskiy/book-universe-framework](https://github.com/nedobylskiy/book-universe-framework).
+
 ## Формат book.config.json
 
 Минимальные поля остаются общими для всех форматов, а форматоспецифичные настройки находятся в `formats`.
@@ -157,6 +192,10 @@ manuscript/edited/10-old-cyborg.txt
   "buildSource": "edited",
   "outputBaseName": "my-book",
   "genres": ["prose"],
+  "universe": {
+    "package": "@my-scope/my-universe",
+    "entry": "universe/index.md"
+  },
   "formats": {
     "txt": {
       "separator": "------------------------------------------------------------------------",
@@ -210,6 +249,7 @@ manuscript/edited/10-old-cyborg.txt
 - `buildSource` — `original` или `edited`;
 - `outputBaseName` — базовое имя файлов в `dist/`;
 - `genres` — жанры по умолчанию;
+- `universe` — опциональная npm-зависимость с общим каноном; `package` задаёт имя пакета, `entry` — главный Markdown-файл внутри него;
 - `chapters` — главы в порядке книги.
 
 ## Настройки TXT

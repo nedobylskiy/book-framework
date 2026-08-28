@@ -8,6 +8,7 @@ Usage:
   book build [--format txt|fb2] [--chapters]
   book build-chapters
   book validate
+  book universe
   book new-chapter <slug> [--title "Chapter title"]
   book help
 `;
@@ -23,6 +24,9 @@ switch (command) {
     break;
   case 'validate':
     await import('../scripts/validate.mjs');
+    break;
+  case 'universe':
+    await import('../scripts/universe.mjs');
     break;
   case 'new-chapter':
     process.argv = [process.argv[0], process.argv[1], ...args];

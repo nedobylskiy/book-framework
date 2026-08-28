@@ -1,5 +1,6 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
+import { createRequire } from 'node:module';
 
 export function normalizeText(text) {
   return text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').trim();
@@ -17,6 +18,34 @@ export async function loadConfig(bookDir = getBookDir()) {
   return JSON.parse(await readFile(join(bookDir, 'book.config.json'), 'utf8'));
 }
 
+export function resolveUniverse(config, bookDir = getBookDir()) {
+  if (config.universe == null) return null;
+  if (typeof config.universe !== 'object' || Array.isArray(config.universe)) {
+    throw new Error('universe должен быть объектом с полями package и entry либо null.');
+  }
+
+  const packageName = config.universe.package;
+  const entry = config.universe.entry ?? 'universe/index.md';
+  const npmPackagePattern = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+  if (typeof packageName !== 'string' || !npmPackagePattern.test(packageName)) {
+    throw new Error('Для universe необходимо указать корректное имя npm-пакета в поле package.');
+  }
+  if (typeof entry !== 'string' || !entry.trim() || entry.startsWith('/') || entry.startsWith('\\') || entry.split(/[\\/]/).includes('..')) {
+    throw new Error('universe.entry должен быть безопасным относительным путём внутри npm-пакета.');
+  }
+
+  const requireFromBook = createRequire(join(bookDir, 'package.json'));
+  try {
+    return {
+      package: packageName,
+      entry,
+      path: requireFromBook.resolve(`${packageName}/${entry}`)
+    };
+  } catch {
+    throw new Error(`Не удалось открыть вселенную ${packageName}/${entry}. Установите пакет и проверьте universe в book.config.json.`);
+  }
+}
+
 export async function validateBook(bookDir = getBookDir(), { readText = true } = {}) {
   const config = await loadConfig(bookDir);
 
@@ -26,6 +55,8 @@ export async function validateBook(bookDir = getBookDir(), { readText = true } =
   if (!Array.isArray(config.chapters) || !config.chapters.length) {
     throw new Error('В book.config.json не указан список chapters.');
   }
+
+  const universe = resolveUniverse(config, bookDir);
 
   const sourceKind = config.buildSource ?? 'edited';
   if (!['original', 'edited'].includes(sourceKind)) {
@@ -62,7 +93,7 @@ export async function validateBook(bookDir = getBookDir(), { readText = true } =
     chapters.push(entry);
   }
 
-  return { bookDir, config, chapters, sourceDir };
+  return { bookDir, config, chapters, sourceDir, universe };
 }
 
 export async function loadBook(bookDir = getBookDir()) {
