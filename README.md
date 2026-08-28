@@ -29,6 +29,8 @@ npx book validate
 npx book build
 npx book build --format txt
 npx book build --format fb2
+npx book build-chapters
+npx book build --format fb2 --chapters
 npx book new-chapter forest-meeting --title "Встреча в лесу"
 ```
 
@@ -41,6 +43,7 @@ CLI всегда работает с текущим каталогом книг�
   "private": true,
   "scripts": {
     "build": "book build",
+    "build:chapters": "book build-chapters",
     "validate": "book validate",
     "chapter": "book new-chapter"
   },
@@ -79,6 +82,11 @@ my-book/
 │   ├── timeline.md
 │   └── continuity.md
 └── dist/
+    ├── my-book.txt
+    ├── my-book.fb2
+    └── chapters/
+        ├── 01-prologue.fb2
+        └── 02-first-chapter.fb2
 ```
 
 ## Имена и порядок глав
@@ -232,7 +240,7 @@ manuscript/edited/10-old-cyborg.txt
 - `genres` — FB2-жанры именно для этого формата; если не указаны, используются общие `genres`;
 - `keywords` — ключевые слова;
 - `sequence.name` и `sequence.number` — книжный цикл и номер в нём;
-- `document.id` — фиксированный ID документа; если отсутствует, создаётся детерминированный SHA-256;
+- `document.id` — базовый ID документа; для отдельных глав на его основе генерируются уникальные ID;
 - `document.version` — версия FB2-документа, по умолчанию `1.0`;
 - `document.date` — дата документа в `YYYY-MM-DD`; по умолчанию текущая дата сборки;
 - `document.author` — автор/редактор электронной версии;
@@ -243,10 +251,6 @@ manuscript/edited/10-old-cyborg.txt
 - `publish.isbn` — ISBN.
 
 Общие `title`, `annotation`, `author` и `language` автоматически попадают в FB2 metadata.
-
-## Документация мира
-
-`docs/` — внутренняя энциклопедия произведения. Рекомендуются `characters.md`, `world.md`, `organizations.md`, `locations.md`, `technology.md`, `plot.md`, `timeline.md` и `continuity.md`. Набор документов можно расширять под конкретный проект.
 
 ## Сборка
 
@@ -260,6 +264,30 @@ book build
 book build --format txt
 book build --format fb2
 ```
+
+### Отдельный FB2 для каждой главы
+
+Для публикационных платформ, куда главы загружаются по одной:
+
+```sh
+book build-chapters
+```
+
+Эквивалентная команда:
+
+```sh
+book build --format fb2 --chapters
+```
+
+Результат:
+
+```text
+dist/chapters/01-prologue.fb2
+dist/chapters/02-first-chapter.fb2
+...
+```
+
+Каждый файл содержит ровно одну главу в `<body>` и не добавляет отдельную титульную секцию, поэтому титульная страница не превращается в лишнюю главу при импорте на платформу. FB2 metadata, обложка, жанры, keywords, sequence и publish-info берутся из того же `formats.fb2`. Для каждой главы генерируется собственный стабильный document ID на основе базового ID книги и имени файла главы.
 
 ## Валидация
 
