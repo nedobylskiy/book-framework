@@ -5,7 +5,8 @@ const [command, ...args] = process.argv.slice(2);
 const help = `Book Framework CLI
 
 Usage:
-  book build [--format txt|fb2]
+  book build [--format txt|fb2] [--chapters]
+  book build-chapters
   book validate
   book new-chapter <slug> [--title "Chapter title"]
   book help
@@ -14,6 +15,10 @@ Usage:
 switch (command) {
   case 'build':
     process.argv = [process.argv[0], process.argv[1], ...args];
+    await import('../scripts/build.mjs');
+    break;
+  case 'build-chapters':
+    process.argv = [process.argv[0], process.argv[1], '--format', 'fb2', '--chapters'];
     await import('../scripts/build.mjs');
     break;
   case 'validate':
