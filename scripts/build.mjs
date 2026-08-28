@@ -1,17 +1,23 @@
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
-import { extname, join, resolve } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { basename, extname, join, resolve } from 'node:path';
 import { authorName, escapeXml, loadBook } from './lib.mjs';
 
 const args = process.argv.slice(2);
 const formatIndex = args.indexOf('--format');
 const format = formatIndex >= 0 ? args[formatIndex + 1] : 'all';
+const chaptersMode = args.includes('--chapters');
 const { bookDir, config, chapters, outputDir } = await loadBook();
 const base = config.outputBaseName ?? config.id ?? 'book';
 
 if (!['all', 'txt', 'fb2'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
-if (format === 'all' || format === 'txt') await buildTxt();
-if (format === 'all' || format === 'fb2') await buildFb2();
+if (chaptersMode && format === 'txt') throw new Error('--chapters поддерживается только для FB2.');
+
+if (!chaptersMode && (format === 'all' || format === 'txt')) await buildTxt();
+if (format === 'all' || format === 'fb2') {
+  if (chaptersMode) await buildFb2Chapters();
+  else await buildFb2();
+}
 
 async function buildTxt() {
   const settings = config.formats?.txt ?? {};
@@ -33,15 +39,36 @@ async function buildTxt() {
 }
 
 async function buildFb2() {
+  const xml = await createFb2({ chapters });
+  const path = join(outputDir, `${base}.fb2`);
+  await writeFile(path, xml, 'utf8');
+  console.log(`FB2: ${path}`);
+}
+
+async function buildFb2Chapters() {
+  const chaptersDir = join(outputDir, 'chapters');
+  await mkdir(chaptersDir, { recursive: true });
+
+  for (const chapter of chapters) {
+    const xml = await createFb2({ chapters: [chapter], idSuffix: chapter.file });
+    const fileName = `${basename(chapter.file, extname(chapter.file))}.fb2`;
+    const path = join(chaptersDir, fileName);
+    await writeFile(path, xml, 'utf8');
+    console.log(`FB2 chapter: ${path}`);
+  }
+}
+
+async function createFb2({ chapters: selectedChapters, idSuffix = '' }) {
   const settings = config.formats?.fb2 ?? {};
   const document = settings.document ?? {};
   const publish = settings.publish ?? {};
   const sequence = settings.sequence ?? null;
-  const bookId = document.id ?? createHash('sha256').update(`${config.title}\n${authorName(config.author)}`).digest('hex');
+  const baseId = document.id ?? `${config.title}\n${authorName(config.author)}`;
+  const bookId = createHash('sha256').update(idSuffix ? `${baseId}\n${idSuffix}` : baseId).digest('hex');
   const version = String(document.version ?? '1.0');
   const documentDate = document.date ?? new Date().toISOString().slice(0, 10);
 
-  const sections = chapters.map((chapter, i) => `    <section id="chapter-${i + 1}">\n      <title><p>${escapeXml(chapter.title)}</p></title>\n${toFb2(chapter.text)}\n    </section>`).join('\n');
+  const sections = selectedChapters.map((chapter, i) => `    <section id="chapter-${i + 1}">\n      <title><p>${escapeXml(chapter.title)}</p></title>\n${toFb2(chapter.text)}\n    </section>`).join('\n');
   const genres = (settings.genres ?? config.genres ?? ['prose']).map(g => `      <genre>${escapeXml(g)}</genre>`).join('\n');
   const annotation = config.annotation ? `\n      <annotation><p>${escapeXml(config.annotation)}</p></annotation>` : '';
   const keywords = settings.keywords?.length ? `\n      <keywords>${escapeXml(settings.keywords.join(', '))}</keywords>` : '';
@@ -50,11 +77,7 @@ async function buildFb2() {
   const coverPage = cover ? `\n      <coverpage><image l:href="#${cover.id}"/></coverpage>` : '';
   const publishInfo = buildPublishInfo(publish, sequence);
 
-  const xml = `<?xml version="1.0" encoding="utf-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n${genres}\n${fb2Author(config.author)}\n      <book-title>${escapeXml(config.title)}</book-title>${annotation}${keywords}\n      <lang>${escapeXml(config.language ?? 'ru')}</lang>${coverPage}${sequenceXml}\n    </title-info>\n    <document-info>\n      <author><nickname>${escapeXml(document.author ?? 'Book Framework')}</nickname></author>\n      <program-used>@nedobylskiy/book-framework</program-used>\n      <date value="${escapeXml(documentDate)}">${escapeXml(documentDate)}</date>\n      <id>${escapeXml(bookId)}</id>\n      <version>${escapeXml(version)}</version>\n    </document-info>${publishInfo}\n  </description>\n  <body>\n${sections}\n  </body>${cover ? `\n  <binary id="${cover.id}" content-type="${cover.mime}">${cover.data}</binary>` : ''}\n</FictionBook>\n`;
-
-  const path = join(outputDir, `${base}.fb2`);
-  await writeFile(path, xml, 'utf8');
-  console.log(`FB2: ${path}`);
+  return `<?xml version="1.0" encoding="utf-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n${genres}\n${fb2Author(config.author)}\n      <book-title>${escapeXml(config.title)}</book-title>${annotation}${keywords}\n      <lang>${escapeXml(config.language ?? 'ru')}</lang>${coverPage}${sequenceXml}\n    </title-info>\n    <document-info>\n      <author><nickname>${escapeXml(document.author ?? 'Book Framework')}</nickname></author>\n      <program-used>@nedobylskiy/book-framework</program-used>\n      <date value="${escapeXml(documentDate)}">${escapeXml(documentDate)}</date>\n      <id>${escapeXml(bookId)}</id>\n      <version>${escapeXml(version)}</version>\n    </document-info>${publishInfo}\n  </description>\n  <body>\n${sections}\n  </body>${cover ? `\n  <binary id="${cover.id}" content-type="${cover.mime}">${cover.data}</binary>` : ''}\n</FictionBook>\n`;
 }
 
 function fb2Author(author = {}) {
