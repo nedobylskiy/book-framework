@@ -1,6 +1,6 @@
 {
   "name": "@nedobylskiy/book-framework",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "CLI framework for writing, editing, validating and building book repositories",
   "type": "module",
   "bin": {
@@ -16,6 +16,7 @@
   },
   "scripts": {
     "build": "book build",
+    "build:chapters": "book build-chapters",
     "validate": "book validate"
   },
   "keywords": ["book", "writing", "fb2", "publishing", "cli"],
