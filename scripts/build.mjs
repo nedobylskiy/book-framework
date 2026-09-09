@@ -100,19 +100,29 @@ function prepareManuscript(sourceChapters) {
   const cleanedChapters = sourceChapters.map(chapter => {
     const lines = chapter.text.split('\n');
     const bodyLines = [];
+    let inCode = false;
 
     for (const line of lines) {
-      const match = /^\s*\[\^([^\]]+)\]:\s*(.+?)\s*$/.exec(line);
-      if (!match) {
+      if (parseFenceLine(line)) {
+        inCode = !inCode;
         bodyLines.push(line);
         continue;
       }
 
-      const [, id, text] = match;
-      if (definitions.has(id)) throw new Error(`Сноска [^${id}] определена больше одного раза.`);
-      definitions.set(id, text);
+      if (!inCode) {
+        const match = /^\s*\[\^([^\]]+)\]:\s*(.+?)\s*$/.exec(line);
+        if (match) {
+          const [, id, text] = match;
+          if (definitions.has(id)) throw new Error(`Сноска [^${id}] определена больше одного раза.`);
+          definitions.set(id, text);
+          continue;
+        }
+      }
+
+      bodyLines.push(line);
     }
 
+    if (inCode) throw new Error(`В главе ${chapter.file} не закрыт блок кода \`\`\`.`);
     return { ...chapter, text: bodyLines.join('\n').trim() };
   });
 
@@ -140,7 +150,17 @@ function prepareManuscript(sourceChapters) {
 }
 
 function collectFootnoteRefsInOrder(text) {
-  return [...text.matchAll(/\[\^([^\]]+)\]/g)].map(match => match[1]);
+  const ids = [];
+  let inCode = false;
+  for (const line of text.split('\n')) {
+    if (parseFenceLine(line)) {
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) continue;
+    for (const match of line.matchAll(/\[\^([^\]]+)\]/g)) ids.push(match[1]);
+  }
+  return ids;
 }
 
 function collectFootnoteRefs(text) {
@@ -148,15 +168,41 @@ function collectFootnoteRefs(text) {
 }
 
 function renderTxtBody(text, footnoteNumbers) {
-  return text
-    .replace(/\n\s*---\s*\n/g, '\n\n\n')
-    .split('\n')
-    .map(line => {
-      const image = parseImageLine(line);
-      if (image) return renderTxtImage(image);
-      return renderTxtInline(line, footnoteNumbers);
-    })
-    .join('\n');
+  const output = [];
+  let inCode = false;
+
+  for (const line of text.split('\n')) {
+    if (parseFenceLine(line)) {
+      inCode = !inCode;
+      continue;
+    }
+
+    if (inCode) {
+      output.push(line);
+      continue;
+    }
+
+    if (line.trim() === '---') {
+      output.push('', '');
+      continue;
+    }
+
+    const heading = parseHeadingLine(line);
+    if (heading) {
+      output.push(renderTxtInline(heading.text, footnoteNumbers));
+      continue;
+    }
+
+    const image = parseImageLine(line);
+    if (image) {
+      output.push(renderTxtImage(image));
+      continue;
+    }
+
+    output.push(renderTxtInline(line, footnoteNumbers));
+  }
+
+  return output.join('\n');
 }
 
 function renderTxtImage(image) {
@@ -167,11 +213,22 @@ function renderTxtImage(image) {
 }
 
 function renderTxtInline(text, footnoteNumbers) {
-  return text
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => label === url ? url : `${label} (${url})`)
-    .replace(/\[\^([^\]]+)\]/g, (_, id) => toSuperscript(footnoteNumbers.get(id)))
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1');
+  const tokenPattern = /`([^`\n]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\[\^([^\]]+)\]/g;
+  let output = '';
+  let cursor = 0;
+
+  for (const match of text.matchAll(tokenPattern)) {
+    output += text.slice(cursor, match.index);
+    if (match[1] != null) output += match[1];
+    else if (match[2] != null) output += renderTxtInline(match[2], footnoteNumbers);
+    else if (match[3] != null) output += renderTxtInline(match[3], footnoteNumbers);
+    else if (match[4] != null) output += match[4] === match[5] ? match[5] : `${match[4]} (${match[5]})`;
+    else output += toSuperscript(footnoteNumbers.get(match[6]));
+    cursor = match.index + match[0].length;
+  }
+
+  output += text.slice(cursor);
+  return output;
 }
 
 function toSuperscript(number) {
@@ -180,15 +237,32 @@ function toSuperscript(number) {
 }
 
 function toFb2(text, footnoteNumbers, images) {
-  const lines = text.split('\n');
   const output = [];
+  let inCode = false;
 
-  for (const line of lines) {
+  for (const line of text.split('\n')) {
+    if (parseFenceLine(line)) {
+      inCode = !inCode;
+      continue;
+    }
+
+    if (inCode) {
+      if (!line.length) output.push('      <empty-line/>');
+      else output.push(`      <p><code>${escapeXml(line)}</code></p>`);
+      continue;
+    }
+
     if (line.trim() === '---') {
       output.push('      <empty-line/>', '      <empty-line/>');
       continue;
     }
     if (!line.trim()) continue;
+
+    const heading = parseHeadingLine(line);
+    if (heading) {
+      output.push(`      <subtitle>${renderFb2Inline(heading.text, footnoteNumbers)}</subtitle>`);
+      continue;
+    }
 
     const image = parseImageLine(line);
     if (image) {
@@ -210,20 +284,22 @@ function renderFb2Inline(text, footnoteNumbers) {
 }
 
 function renderFb2Range(text, footnoteNumbers) {
-  const tokenPattern = /\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\[\^([^\]]+)\]/g;
+  const tokenPattern = /`([^`\n]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\[\^([^\]]+)\]/g;
   let output = '';
   let cursor = 0;
 
   for (const match of text.matchAll(tokenPattern)) {
     output += escapeXml(text.slice(cursor, match.index));
     if (match[1] != null) {
-      output += `<strong>${renderFb2Range(match[1], footnoteNumbers)}</strong>`;
+      output += `<code>${escapeXml(match[1])}</code>`;
     } else if (match[2] != null) {
-      output += `<emphasis>${renderFb2Range(match[2], footnoteNumbers)}</emphasis>`;
+      output += `<strong>${renderFb2Range(match[2], footnoteNumbers)}</strong>`;
     } else if (match[3] != null) {
-      output += `<a l:href="${escapeXml(match[4])}">${escapeXml(match[3])}</a>`;
+      output += `<emphasis>${renderFb2Range(match[3], footnoteNumbers)}</emphasis>`;
+    } else if (match[4] != null) {
+      output += `<a l:href="${escapeXml(match[5])}">${escapeXml(match[4])}</a>`;
     } else {
-      const id = match[5];
+      const id = match[6];
       const number = footnoteNumbers.get(id);
       output += `<a l:href="#note-${number}" type="note">${number}</a>`;
     }
@@ -240,6 +316,16 @@ function buildFb2Notes(footnotes, footnoteNumbers) {
   return `\n  <body name="notes">\n${sections}\n  </body>`;
 }
 
+function parseHeadingLine(line) {
+  const match = /^\s*(#{2,6})\s+(.+?)\s*$/.exec(line);
+  return match ? { level: match[1].length, text: match[2] } : null;
+}
+
+function parseFenceLine(line) {
+  const match = /^\s*```([A-Za-z0-9_+.-]*)\s*$/.exec(line);
+  return match ? { language: match[1] || null } : null;
+}
+
 function parseImageLine(line) {
   const match = /^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/.exec(line);
   return match ? { alt: match[1].trim(), path: match[2].trim() } : null;
@@ -248,7 +334,13 @@ function parseImageLine(line) {
 async function loadBodyImages(selectedChapters) {
   const paths = new Set();
   for (const chapter of selectedChapters) {
+    let inCode = false;
     for (const line of chapter.text.split('\n')) {
+      if (parseFenceLine(line)) {
+        inCode = !inCode;
+        continue;
+      }
+      if (inCode) continue;
       const image = parseImageLine(line);
       if (!image || isHttpUrl(image.path)) continue;
       paths.add(normalizeAssetPath(image.path));
@@ -256,9 +348,7 @@ async function loadBodyImages(selectedChapters) {
   }
 
   const images = new Map();
-  for (const path of paths) {
-    images.set(path, await loadImage(path, 'image'));
-  }
+  for (const path of paths) images.set(path, await loadImage(path, 'image'));
   return images;
 }
 
