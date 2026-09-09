@@ -1,6 +1,6 @@
 {
   "name": "@nedobylskiy/book-framework",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "CLI framework for writing, editing, validating and building book repositories",
   "type": "module",
   "bin": {
@@ -20,6 +20,6 @@
     "build:chapters": "node bin/book.mjs build-chapters",
     "validate": "node bin/book.mjs validate"
   },
-  "keywords": ["book", "writing", "fb2", "publishing", "cli"],
+  "keywords": ["book", "writing", "fb2", "publishing", "cli", "markdown"],
   "license": "UNLICENSED"
 }
