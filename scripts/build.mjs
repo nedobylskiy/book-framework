@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, extname, join, resolve } from 'node:path';
+import { basename, extname, join, resolve, sep } from 'node:path';
 import { authorName, escapeXml, loadBook } from './lib.mjs';
 
 const args = process.argv.slice(2);
@@ -77,18 +77,22 @@ async function createFb2({ chapters: selectedChapters, footnotes = [], idSuffix 
   const bookId = createHash('sha256').update(idSuffix ? `${baseId}\n${idSuffix}` : baseId).digest('hex');
   const version = String(document.version ?? '1.0');
   const documentDate = document.date ?? new Date().toISOString().slice(0, 10);
+  const bodyImages = await loadBodyImages(selectedChapters);
 
-  const sections = selectedChapters.map((chapter, i) => `    <section id="chapter-${i + 1}">\n      <title><p>${escapeXml(chapter.title)}</p></title>\n${toFb2(chapter.text, manuscript.footnoteNumbers)}\n    </section>`).join('\n');
+  const sections = selectedChapters.map((chapter, i) => `    <section id="chapter-${i + 1}">\n      <title><p>${escapeXml(chapter.title)}</p></title>\n${toFb2(chapter.text, manuscript.footnoteNumbers, bodyImages)}\n    </section>`).join('\n');
   const notesBody = buildFb2Notes(footnotes, manuscript.footnoteNumbers);
   const genres = (settings.genres ?? config.genres ?? ['prose']).map(g => `      <genre>${escapeXml(g)}</genre>`).join('\n');
   const annotation = config.annotation ? `\n      <annotation><p>${escapeXml(config.annotation)}</p></annotation>` : '';
   const keywords = settings.keywords?.length ? `\n      <keywords>${escapeXml(settings.keywords.join(', '))}</keywords>` : '';
   const sequenceXml = sequence?.name ? `\n      <sequence name="${escapeXml(sequence.name)}"${sequence.number != null ? ` number="${escapeXml(sequence.number)}"` : ''}/>` : '';
-  const cover = await loadCover(settings.cover);
+  const cover = await loadImage(settings.cover, 'cover');
   const coverPage = cover ? `\n      <coverpage><image l:href="#${cover.id}"/></coverpage>` : '';
   const publishInfo = buildPublishInfo(publish, sequence);
+  const binaries = [...bodyImages.values(), ...(cover ? [cover] : [])]
+    .map(image => `\n  <binary id="${image.id}" content-type="${image.mime}">${image.data}</binary>`)
+    .join('');
 
-  return `<?xml version="1.0" encoding="utf-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n${genres}\n${fb2Author(config.author)}\n      <book-title>${escapeXml(config.title)}</book-title>${annotation}${keywords}\n      <lang>${escapeXml(config.language ?? 'ru')}</lang>${coverPage}${sequenceXml}\n    </title-info>\n    <document-info>\n      <author><nickname>${escapeXml(document.author ?? 'Book Framework')}</nickname></author>\n      <program-used>@nedobylskiy/book-framework</program-used>\n      <date value="${escapeXml(documentDate)}">${escapeXml(documentDate)}</date>\n      <id>${escapeXml(bookId)}</id>\n      <version>${escapeXml(version)}</version>\n    </document-info>${publishInfo}\n  </description>\n  <body>\n${sections}\n  </body>${notesBody}${cover ? `\n  <binary id="${cover.id}" content-type="${cover.mime}">${cover.data}</binary>` : ''}\n</FictionBook>\n`;
+  return `<?xml version="1.0" encoding="utf-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n${genres}\n${fb2Author(config.author)}\n      <book-title>${escapeXml(config.title)}</book-title>${annotation}${keywords}\n      <lang>${escapeXml(config.language ?? 'ru')}</lang>${coverPage}${sequenceXml}\n    </title-info>\n    <document-info>\n      <author><nickname>${escapeXml(document.author ?? 'Book Framework')}</nickname></author>\n      <program-used>@nedobylskiy/book-framework</program-used>\n      <date value="${escapeXml(documentDate)}">${escapeXml(documentDate)}</date>\n      <id>${escapeXml(bookId)}</id>\n      <version>${escapeXml(version)}</version>\n    </document-info>${publishInfo}\n  </description>\n  <body>\n${sections}\n  </body>${notesBody}${binaries}\n</FictionBook>\n`;
 }
 
 function prepareManuscript(sourceChapters) {
@@ -147,14 +151,27 @@ function renderTxtBody(text, footnoteNumbers) {
   return text
     .replace(/\n\s*---\s*\n/g, '\n\n\n')
     .split('\n')
-    .map(line => renderTxtInline(line, footnoteNumbers))
+    .map(line => {
+      const image = parseImageLine(line);
+      if (image) return renderTxtImage(image);
+      return renderTxtInline(line, footnoteNumbers);
+    })
     .join('\n');
+}
+
+function renderTxtImage(image) {
+  const target = image.path;
+  const baseUrl = config.assets?.baseUrl;
+  const url = baseUrl && !isHttpUrl(target) ? joinUrl(baseUrl, target) : target;
+  return image.alt ? `${image.alt}: ${url}` : url;
 }
 
 function renderTxtInline(text, footnoteNumbers) {
   return text
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => label === url ? url : `${label} (${url})`)
-    .replace(/\[\^([^\]]+)\]/g, (_, id) => toSuperscript(footnoteNumbers.get(id)));
+    .replace(/\[\^([^\]]+)\]/g, (_, id) => toSuperscript(footnoteNumbers.get(id)))
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1');
 }
 
 function toSuperscript(number) {
@@ -162,7 +179,7 @@ function toSuperscript(number) {
   return String(number).split('').map(digit => digits[digit]).join('');
 }
 
-function toFb2(text, footnoteNumbers) {
+function toFb2(text, footnoteNumbers, images) {
   const lines = text.split('\n');
   const output = [];
 
@@ -172,6 +189,16 @@ function toFb2(text, footnoteNumbers) {
       continue;
     }
     if (!line.trim()) continue;
+
+    const image = parseImageLine(line);
+    if (image) {
+      if (isHttpUrl(image.path)) throw new Error(`FB2 не может встроить удалённое изображение: ${image.path}. Используйте путь к файлу в репозитории.`);
+      const loaded = images.get(normalizeAssetPath(image.path));
+      if (!loaded) throw new Error(`Изображение не загружено: ${image.path}`);
+      output.push(`      <image l:href="#${loaded.id}"${image.alt ? ` title="${escapeXml(image.alt)}"` : ''}/>`);
+      continue;
+    }
+
     output.push(`      <p>${renderFb2Inline(line.trim(), footnoteNumbers)}</p>`);
   }
 
@@ -179,16 +206,24 @@ function toFb2(text, footnoteNumbers) {
 }
 
 function renderFb2Inline(text, footnoteNumbers) {
-  const tokenPattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\[\^([^\]]+)\]/g;
+  return renderFb2Range(text, footnoteNumbers);
+}
+
+function renderFb2Range(text, footnoteNumbers) {
+  const tokenPattern = /\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\[\^([^\]]+)\]/g;
   let output = '';
   let cursor = 0;
 
   for (const match of text.matchAll(tokenPattern)) {
     output += escapeXml(text.slice(cursor, match.index));
     if (match[1] != null) {
-      output += `<a l:href="${escapeXml(match[2])}">${escapeXml(match[1])}</a>`;
+      output += `<strong>${renderFb2Range(match[1], footnoteNumbers)}</strong>`;
+    } else if (match[2] != null) {
+      output += `<emphasis>${renderFb2Range(match[2], footnoteNumbers)}</emphasis>`;
+    } else if (match[3] != null) {
+      output += `<a l:href="${escapeXml(match[4])}">${escapeXml(match[3])}</a>`;
     } else {
-      const id = match[3];
+      const id = match[5];
       const number = footnoteNumbers.get(id);
       output += `<a l:href="#note-${number}" type="note">${number}</a>`;
     }
@@ -203,6 +238,58 @@ function buildFb2Notes(footnotes, footnoteNumbers) {
   if (!footnotes.length) return '';
   const sections = footnotes.map(note => `    <section id="note-${note.number}">\n      <title><p>${note.number}</p></title>\n      <p>${renderFb2Inline(note.text, footnoteNumbers)}</p>\n    </section>`).join('\n');
   return `\n  <body name="notes">\n${sections}\n  </body>`;
+}
+
+function parseImageLine(line) {
+  const match = /^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/.exec(line);
+  return match ? { alt: match[1].trim(), path: match[2].trim() } : null;
+}
+
+async function loadBodyImages(selectedChapters) {
+  const paths = new Set();
+  for (const chapter of selectedChapters) {
+    for (const line of chapter.text.split('\n')) {
+      const image = parseImageLine(line);
+      if (!image || isHttpUrl(image.path)) continue;
+      paths.add(normalizeAssetPath(image.path));
+    }
+  }
+
+  const images = new Map();
+  for (const path of paths) {
+    images.set(path, await loadImage(path, 'image'));
+  }
+  return images;
+}
+
+async function loadImage(relativePath, kind = 'image') {
+  if (!relativePath) return null;
+  if (isHttpUrl(relativePath)) throw new Error(`Для FB2 требуется локальный файл изображения, а не URL: ${relativePath}`);
+
+  const normalized = normalizeAssetPath(relativePath);
+  const path = resolve(bookDir, normalized);
+  if (!path.startsWith(bookDir + sep) && path !== bookDir) throw new Error(`Путь изображения выходит за пределы репозитория: ${relativePath}`);
+
+  const extension = extname(path).toLowerCase();
+  const mime = extension === '.png' ? 'image/png' : ['.jpg', '.jpeg'].includes(extension) ? 'image/jpeg' : null;
+  if (!mime) throw new Error(`FB2 поддерживает изображения PNG, JPG или JPEG: ${relativePath}`);
+
+  const data = (await readFile(path)).toString('base64');
+  const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 12);
+  const normalizedExt = extension === '.jpeg' ? '.jpg' : extension;
+  return { id: kind === 'cover' ? `cover${normalizedExt}` : `image-${hash}${normalizedExt}`, mime, data, path: normalized };
+}
+
+function normalizeAssetPath(value) {
+  return value.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+function isHttpUrl(value) {
+  return /^https?:\/\//i.test(value);
+}
+
+function joinUrl(baseUrl, relativePath) {
+  return `${baseUrl.replace(/\/+$/, '')}/${normalizeAssetPath(relativePath).replace(/^\/+/, '')}`;
 }
 
 function fb2Author(author = {}) {
@@ -225,14 +312,4 @@ function buildPublishInfo(publish, sequence) {
   if (publish.isbn) rows.push(`      <isbn>${escapeXml(publish.isbn)}</isbn>`);
   if (sequence?.name) rows.push(`      <sequence name="${escapeXml(sequence.name)}"${sequence.number != null ? ` number="${escapeXml(sequence.number)}"` : ''}/>`);
   return rows.length ? `\n    <publish-info>\n${rows.join('\n')}\n    </publish-info>` : '';
-}
-
-async function loadCover(relativePath) {
-  if (!relativePath) return null;
-  const path = resolve(bookDir, relativePath);
-  const extension = extname(path).toLowerCase();
-  const mime = extension === '.png' ? 'image/png' : ['.jpg', '.jpeg'].includes(extension) ? 'image/jpeg' : null;
-  if (!mime) throw new Error('FB2 cover поддерживает PNG, JPG или JPEG.');
-  const data = (await readFile(path)).toString('base64');
-  return { id: `cover${extension === '.jpeg' ? '.jpg' : extension}`, mime, data };
 }
