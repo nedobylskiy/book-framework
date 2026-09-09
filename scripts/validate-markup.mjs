@@ -5,9 +5,20 @@ export async function validateMarkup(chapters, { bookDir = process.cwd() } = {})
   const definitions = new Map();
   const referenced = new Set();
   const images = new Set();
+  let codeBlocks = 0;
 
   for (const chapter of chapters) {
+    let inCode = false;
+
     for (const line of chapter.text.split('\n')) {
+      if (parseFenceLine(line)) {
+        inCode = !inCode;
+        if (inCode) codeBlocks += 1;
+        continue;
+      }
+
+      if (inCode) continue;
+
       const definition = /^\s*\[\^([^\]]+)\]:\s*(.+?)\s*$/.exec(line);
       if (definition) {
         const [, id] = definition;
@@ -18,9 +29,11 @@ export async function validateMarkup(chapters, { bookDir = process.cwd() } = {})
 
       for (const match of line.matchAll(/\[\^([^\]]+)\]/g)) referenced.add(match[1]);
 
-      const image = /^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/.exec(line);
-      if (image && !/^https?:\/\//i.test(image[2].trim())) images.add(image[2].trim());
+      const image = parseImageLine(line);
+      if (image && !/^https?:\/\//i.test(image.path)) images.add(image.path);
     }
+
+    if (inCode) throw new Error(`В главе ${chapter.file} не закрыт блок кода \`\`\`.`);
   }
 
   for (const id of referenced) {
@@ -49,5 +62,14 @@ export async function validateMarkup(chapters, { bookDir = process.cwd() } = {})
     }
   }
 
-  return { footnotes: referenced.size, images: images.size };
+  return { footnotes: referenced.size, images: images.size, codeBlocks };
+}
+
+function parseFenceLine(line) {
+  return /^\s*```([A-Za-z0-9_+.-]*)\s*$/.exec(line);
+}
+
+function parseImageLine(line) {
+  const match = /^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/.exec(line);
+  return match ? { alt: match[1].trim(), path: match[2].trim() } : null;
 }
