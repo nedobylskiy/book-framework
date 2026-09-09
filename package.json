@@ -9,7 +9,8 @@
   "files": [
     "bin/",
     "scripts/",
-    "README.md"
+    "README.md",
+    "MANUSCRIPT_SYNTAX.md"
   ],
   "engines": {
     "node": ">=20"
