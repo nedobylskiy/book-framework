@@ -249,7 +249,7 @@ function toFb2(text, footnoteNumbers, images) {
     if (inCode) {
       const codeLine = normalizeCodeLine(line);
       if (!codeLine.length) output.push('      <empty-line/>');
-      else output.push(`      <p xml:space="preserve"><code xml:space="preserve">${escapeXml(codeLine)}</code></p>`);
+      else output.push(`      <p><code>${escapeXml(preserveLeadingCodeSpaces(codeLine))}</code></p>`);
       continue;
     }
 
@@ -292,7 +292,7 @@ function renderFb2Range(text, footnoteNumbers) {
   for (const match of text.matchAll(tokenPattern)) {
     output += escapeXml(text.slice(cursor, match.index));
     if (match[1] != null) {
-      output += `<code xml:space="preserve">${escapeXml(match[1])}</code>`;
+      output += `<code>${escapeXml(match[1])}</code>`;
     } else if (match[2] != null) {
       output += `<strong>${renderFb2Range(match[2], footnoteNumbers)}</strong>`;
     } else if (match[3] != null) {
@@ -330,6 +330,12 @@ function parseFenceLine(line) {
 function normalizeCodeLine(line) {
   const normalized = line.replace(/\t/g, '    ');
   return normalized.trim().length ? normalized : '';
+}
+
+function preserveLeadingCodeSpaces(line) {
+  const match = /^ +/.exec(line);
+  if (!match) return line;
+  return '\u00A0'.repeat(match[0].length) + line.slice(match[0].length);
 }
 
 function parseImageLine(line) {
