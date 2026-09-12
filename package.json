@@ -1,6 +1,6 @@
 {
   "name": "@nedobylskiy/book-framework",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "CLI framework for writing, editing, validating and building book repositories",
   "type": "module",
   "bin": {
