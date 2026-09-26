@@ -5,7 +5,7 @@ const [command, ...args] = process.argv.slice(2);
 const help = `Book Framework CLI
 
 Usage:
-  book build [--format txt|fb2] [--chapters]
+  book build [--format txt|fb2|epub] [--chapters]
   book build-chapters
   book validate
   book universe

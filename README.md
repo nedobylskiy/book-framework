@@ -30,6 +30,7 @@ npx book universe
 npx book build
 npx book build --format txt
 npx book build --format fb2
+npx book build --format epub
 npx book build-chapters
 npx book build --format fb2 --chapters
 npx book new-chapter forest-meeting --title "Встреча в лесу"
@@ -44,6 +45,7 @@ CLI всегда работает с текущим каталогом книг�
   "private": true,
   "scripts": {
     "build": "book build",
+    "build:epub": "book build --format epub",
     "build:chapters": "book build-chapters",
     "validate": "book validate",
     "chapter": "book new-chapter"
@@ -86,6 +88,7 @@ my-book/
 └── dist/
     ├── my-book.txt
     ├── my-book.fb2
+    ├── my-book.epub
     └── chapters/
         ├── 01-prologue.fb2
         └── 02-first-chapter.fb2
@@ -229,6 +232,21 @@ npx book universe
         "year": 2026,
         "isbn": "978-0-00-000000-0"
       }
+    },
+    "epub": {
+      "cover": "assets/cover.jpg",
+      "titlePage": true,
+      "tableOfContents": true,
+      "stylesheet": "assets/epub.css",
+      "publisher": "Издательство",
+      "isbn": "978-0-00-000000-0",
+      "rights": "© Автор, 2026",
+      "translators": [
+        {
+          "firstName": "Имя",
+          "lastName": "Переводчика"
+        }
+      ]
     }
   },
   "chapters": [
@@ -304,17 +322,39 @@ npx book universe
 
 Общие `title`, `annotation`, `author`, `language` и `sourceLanguage` автоматически попадают в FB2 metadata. Для непереводной книги `sourceLanguage` и `translators` можно не указывать.
 
+## Настройки EPUB
+
+Фреймворк создаёт адаптивный EPUB 3.3 командой `book build --format epub`. В архив входят отдельные XHTML-файлы глав, обязательное оглавление, OPF-манифест, стили, изображения, обложка и примечания. Обычная команда `book build` собирает EPUB вместе с TXT и FB2.
+
+`formats.epub` поддерживает:
+
+- `cover` — локальная обложка JPG, JPEG или PNG; если поле отсутствует, используется `formats.fb2.cover`;
+- `language` — язык EPUB; по умолчанию используется общее поле `language`;
+- `titlePage` — добавлять титульную страницу, по умолчанию `true`;
+- `tableOfContents` — включать видимое оглавление в порядок чтения, по умолчанию `true`; сам `nav.xhtml` создаётся всегда;
+- `stylesheet` — путь к собственному CSS относительно корня книги; без него используется встроенный базовый стиль;
+- `identifier` — постоянный URI-идентификатор издания; без него используется ISBN или стабильный хеш книги;
+- `modified` — дата изменения EPUB в формате UTC, например `2026-09-26T12:00:00Z`; без неё используется время сборки;
+- `publisher`, `isbn`, `rights` — издательские метаданные;
+- `subjects` — массив тематик; по умолчанию используются общие `genres`;
+- `translators` — переводчики; если поле отсутствует, используются `formats.fb2.translators`.
+
+Авторы записываются в EPUB как `dc:creator` с ролью `aut`, переводчики — как `dc:contributor` с ролью `trl`. Поддерживаются та же разметка, локальные изображения и сноски, что и в FB2. Удалённые изображения в EPUB не упаковываются — их нужно сохранить в книжном репозитории.
+
+Готовый файл рекомендуется проверять официальным EPUBCheck перед публикацией.
+
 ## Сборка
 
 ```sh
 book build
 ```
 
-Создаёт TXT и FB2 в `dist/`.
+Создаёт TXT, FB2 и EPUB в `dist/`.
 
 ```sh
 book build --format txt
 book build --format fb2
+book build --format epub
 ```
 
 ### Отдельный FB2 для каждой главы

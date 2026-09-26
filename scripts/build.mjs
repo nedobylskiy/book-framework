@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, extname, join, resolve, sep } from 'node:path';
+import yazl from 'yazl';
 import { authorName, escapeXml, loadBook } from './lib.mjs';
 
 const args = process.argv.slice(2);
@@ -11,14 +13,15 @@ const { bookDir, config, chapters, outputDir } = await loadBook();
 const base = config.outputBaseName ?? config.id ?? 'book';
 const manuscript = prepareManuscript(chapters);
 
-if (!['all', 'txt', 'fb2'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
-if (chaptersMode && format === 'txt') throw new Error('--chapters поддерживается только для FB2.');
+if (!['all', 'txt', 'fb2', 'epub'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
+if (chaptersMode && !['all', 'fb2'].includes(format)) throw new Error('--chapters поддерживается только для FB2.');
 
 if (!chaptersMode && (format === 'all' || format === 'txt')) await buildTxt();
 if (format === 'all' || format === 'fb2') {
   if (chaptersMode) await buildFb2Chapters();
   else await buildFb2();
 }
+if (!chaptersMode && (format === 'all' || format === 'epub')) await buildEpub();
 
 async function buildTxt() {
   const settings = config.formats?.txt ?? {};
@@ -66,6 +69,156 @@ async function buildFb2Chapters() {
     await writeFile(path, xml, 'utf8');
     console.log(`FB2 chapter: ${path}`);
   }
+}
+
+async function buildEpub() {
+  const settings = config.formats?.epub ?? {};
+  const language = settings.language ?? config.language ?? 'ru';
+  const publisher = settings.publisher ?? config.formats?.fb2?.publish?.publisher;
+  const isbn = settings.isbn ?? config.formats?.fb2?.publish?.isbn;
+  const translators = settings.translators ?? config.formats?.fb2?.translators ?? [];
+  const titlePageEnabled = settings.titlePage ?? true;
+  const tocEnabled = settings.tableOfContents ?? true;
+  const bodyImages = await loadBodyImages(manuscript.chapters);
+  const cover = await loadImage(settings.cover ?? config.formats?.fb2?.cover, 'cover');
+  const identifierHash = createHash('sha256').update(`${config.id ?? config.title}\n${authorName(config.author)}`).digest('hex');
+  const identifier = settings.identifier ?? (isbn ? `urn:isbn:${isbn}` : `urn:sha256:${identifierHash}`);
+  const modified = settings.modified ?? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const chapterFiles = manuscript.chapters.map((chapter, index) => ({
+    ...chapter,
+    id: `chapter-${index + 1}`,
+    href: `chapter-${String(index + 1).padStart(2, '0')}.xhtml`
+  }));
+
+  const entries = new Map();
+  entries.set('META-INF/container.xml', epubContainer());
+  entries.set('EPUB/styles.css', await epubStyles(settings));
+  entries.set('EPUB/nav.xhtml', epubNavigation(chapterFiles, language, { cover: Boolean(cover), titlePage: titlePageEnabled }));
+  if (cover) entries.set('EPUB/cover.xhtml', epubCoverPage(cover, language));
+  if (titlePageEnabled) entries.set('EPUB/title.xhtml', epubTitlePage(language, translators));
+  for (const chapter of chapterFiles) {
+    entries.set(`EPUB/${chapter.href}`, epubChapter(chapter, language, bodyImages));
+  }
+  if (manuscript.footnotes.length) entries.set('EPUB/notes.xhtml', epubNotes(language));
+  for (const image of bodyImages.values()) entries.set(`EPUB/images/${image.id}`, Buffer.from(image.data, 'base64'));
+  if (cover) entries.set(`EPUB/images/${cover.id}`, Buffer.from(cover.data, 'base64'));
+  entries.set('EPUB/content.opf', epubPackage({
+    settings, language, publisher, isbn, translators, identifier, modified, chapterFiles,
+    bodyImages, cover, titlePageEnabled, tocEnabled
+  }));
+
+  const path = join(outputDir, `${base}.epub`);
+  await writeEpubZip(path, entries);
+  console.log(`EPUB: ${path}`);
+}
+
+function epubContainer() {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n  <rootfiles>\n    <rootfile full-path="EPUB/content.opf" media-type="application/oebps-package+xml"/>\n  </rootfiles>\n</container>\n`;
+}
+
+async function epubStyles(settings) {
+  if (settings.stylesheet) {
+    const path = resolve(bookDir, normalizeAssetPath(settings.stylesheet));
+    if (!path.startsWith(bookDir + sep) && path !== bookDir) throw new Error(`Путь EPUB stylesheet выходит за пределы репозитория: ${settings.stylesheet}`);
+    return readFile(path, 'utf8');
+  }
+  return `body { font-family: serif; line-height: 1.5; margin: 5%; }\nh1, h2, h3 { text-align: center; }\np { margin: 0 0 0.7em; text-indent: 1.5em; }\npre { font-family: monospace; white-space: pre-wrap; }\nimg { display: block; max-width: 100%; height: auto; margin: 1em auto; }\n.title-page, .cover { text-align: center; }\n.title-page p, .footnotes p { text-indent: 0; }\n`;
+}
+
+function epubDocument(title, language, body, extraHead = '') {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${escapeXml(language)}" lang="${escapeXml(language)}">\n<head>\n  <meta charset="UTF-8"/>\n  <title>${escapeXml(title)}</title>\n  <link rel="stylesheet" type="text/css" href="styles.css"/>${extraHead}\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
+}
+
+function epubNavigation(chapters, language, landmarks) {
+  const links = chapters.map(chapter => `      <li><a href="${chapter.href}">${escapeXml(chapter.title)}</a></li>`).join('\n');
+  const landmarkLinks = [
+    landmarks.cover ? '      <li><a epub:type="cover" href="cover.xhtml">Обложка</a></li>' : '',
+    landmarks.titlePage ? '      <li><a epub:type="titlepage" href="title.xhtml">Титульная страница</a></li>' : '',
+    chapters.length ? `      <li><a epub:type="bodymatter" href="${chapters[0].href}">Начало текста</a></li>` : ''
+  ].filter(Boolean).join('\n');
+  return epubDocument('Оглавление', language, `  <nav epub:type="toc" id="toc">\n    <h1>Оглавление</h1>\n    <ol>\n${links}\n    </ol>\n  </nav>\n  <nav epub:type="landmarks" hidden="hidden">\n    <ol>\n${landmarkLinks}\n    </ol>\n  </nav>`);
+}
+
+function epubCoverPage(cover, language) {
+  return epubDocument(config.title, language, `  <section epub:type="cover" class="cover">\n    <img src="images/${cover.id}" alt="Обложка: ${escapeXml(config.title)}"/>\n  </section>`);
+}
+
+function epubTitlePage(language, translators) {
+  const translatorRows = translators.map(person => `    <p>Перевод: ${escapeXml(personName(person))}</p>`).join('\n');
+  return epubDocument(config.title, language, `  <section epub:type="titlepage" class="title-page">\n    <h1>${escapeXml(config.title)}</h1>\n    <p>${escapeXml(authorName(config.author))}</p>${translatorRows ? `\n${translatorRows}` : ''}\n  </section>`);
+}
+
+function epubChapter(chapter, language, images) {
+  const body = `  <section epub:type="chapter" id="${chapter.id}">\n    <h1>${escapeXml(chapter.title)}</h1>\n${toEpub(chapter.text, manuscript.footnoteNumbers, images)}\n  </section>`;
+  return epubDocument(chapter.title, language, body);
+}
+
+function epubNotes(language) {
+  const notes = manuscript.footnotes.map(note => `    <aside epub:type="footnote" id="note-${note.number}">\n      <p><span>${note.number}.</span> ${renderEpubInline(note.text, manuscript.footnoteNumbers)}</p>\n    </aside>`).join('\n');
+  return epubDocument('Примечания', language, `  <section epub:type="footnotes" class="footnotes">\n    <h1>Примечания</h1>\n${notes}\n  </section>`);
+}
+
+function epubPackage({ settings, language, publisher, isbn, translators, identifier, modified, chapterFiles, bodyImages, cover, titlePageEnabled, tocEnabled }) {
+  const metadata = [];
+  metadata.push(`    <dc:identifier id="pub-id">${escapeXml(identifier)}</dc:identifier>`);
+  metadata.push(`    <dc:title>${escapeXml(config.title)}</dc:title>`);
+  metadata.push(`    <dc:language>${escapeXml(language)}</dc:language>`);
+  metadata.push(`    <dc:creator id="creator-1">${escapeXml(authorName(config.author))}</dc:creator>`);
+  metadata.push('    <meta refines="#creator-1" property="role" scheme="marc:relators">aut</meta>');
+  translators.forEach((person, index) => {
+    metadata.push(`    <dc:contributor id="translator-${index + 1}">${escapeXml(personName(person))}</dc:contributor>`);
+    metadata.push(`    <meta refines="#translator-${index + 1}" property="role" scheme="marc:relators">trl</meta>`);
+  });
+  if (config.annotation) metadata.push(`    <dc:description>${escapeXml(config.annotation)}</dc:description>`);
+  for (const subject of settings.subjects ?? config.genres ?? []) metadata.push(`    <dc:subject>${escapeXml(subject)}</dc:subject>`);
+  if (publisher) metadata.push(`    <dc:publisher>${escapeXml(publisher)}</dc:publisher>`);
+  if (isbn && identifier !== `urn:isbn:${isbn}`) metadata.push(`    <dc:identifier>${escapeXml(`urn:isbn:${isbn}`)}</dc:identifier>`);
+  if (settings.rights) metadata.push(`    <dc:rights>${escapeXml(settings.rights)}</dc:rights>`);
+  metadata.push(`    <meta property="dcterms:modified">${escapeXml(modified)}</meta>`);
+
+  const manifest = [
+    `    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
+    `    <item id="css" href="styles.css" media-type="text/css"/>`
+  ];
+  const spine = [];
+  if (cover) {
+    manifest.push(`    <item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>`);
+    manifest.push(`    <item id="cover-image" href="images/${cover.id}" media-type="${cover.mime}" properties="cover-image"/>`);
+    spine.push('    <itemref idref="cover-page" linear="no"/>');
+  }
+  if (titlePageEnabled) {
+    manifest.push('    <item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>');
+    spine.push('    <itemref idref="title-page"/>');
+  }
+  if (tocEnabled) spine.push('    <itemref idref="nav" linear="no"/>');
+  for (const chapter of chapterFiles) {
+    manifest.push(`    <item id="${chapter.id}" href="${chapter.href}" media-type="application/xhtml+xml"/>`);
+    spine.push(`    <itemref idref="${chapter.id}"/>`);
+  }
+  if (manuscript.footnotes.length) {
+    manifest.push('    <item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/>');
+    spine.push('    <itemref idref="notes" linear="no"/>');
+  }
+  for (const image of bodyImages.values()) manifest.push(`    <item id="resource-${image.id.replace(/[^a-zA-Z0-9_-]/g, '-')}" href="images/${image.id}" media-type="${image.mime}"/>`);
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0" unique-identifier="pub-id" xml:lang="${escapeXml(language)}">\n  <metadata>\n${metadata.join('\n')}\n  </metadata>\n  <manifest>\n${manifest.join('\n')}\n  </manifest>\n  <spine>\n${spine.join('\n')}\n  </spine>\n</package>\n`;
+}
+
+async function writeEpubZip(path, entries) {
+  const zip = new yazl.ZipFile();
+  const epoch = new Date('1980-01-01T00:00:00Z');
+  zip.addBuffer(Buffer.from('application/epub+zip', 'ascii'), 'mimetype', { compress: false, mtime: epoch });
+  for (const [name, content] of entries) {
+    zip.addBuffer(Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8'), name, { mtime: epoch });
+  }
+
+  await new Promise((resolvePromise, reject) => {
+    const output = createWriteStream(path);
+    output.on('close', resolvePromise);
+    output.on('error', reject);
+    zip.outputStream.on('error', reject).pipe(output);
+    zip.end();
+  });
 }
 
 async function createFb2({ chapters: selectedChapters, footnotes = [], idSuffix = '' }) {
@@ -315,6 +468,72 @@ function renderFb2Range(text, footnoteNumbers) {
   return output;
 }
 
+function toEpub(text, footnoteNumbers, images) {
+  const output = [];
+  let inCode = false;
+  let codeLines = [];
+
+  for (const line of text.split('\n')) {
+    if (parseFenceLine(line)) {
+      if (inCode) {
+        output.push(`    <pre><code>${escapeXml(codeLines.map(normalizeCodeLine).join('\n'))}</code></pre>`);
+        codeLines = [];
+      }
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+    if (!line.trim()) continue;
+    if (line.trim() === '---') {
+      output.push('    <hr/>');
+      continue;
+    }
+
+    const heading = parseHeadingLine(line);
+    if (heading) {
+      output.push(`    <h${heading.level}>${renderEpubInline(heading.text, footnoteNumbers)}</h${heading.level}>`);
+      continue;
+    }
+
+    const image = parseImageLine(line);
+    if (image) {
+      if (isHttpUrl(image.path)) throw new Error(`EPUB не может упаковать удалённое изображение: ${image.path}. Используйте путь к файлу в репозитории.`);
+      const loaded = images.get(normalizeAssetPath(image.path));
+      if (!loaded) throw new Error(`Изображение не загружено: ${image.path}`);
+      output.push(`    <figure><img src="images/${loaded.id}" alt="${escapeXml(image.alt)}"/></figure>`);
+      continue;
+    }
+
+    output.push(`    <p>${renderEpubInline(line.trim(), footnoteNumbers)}</p>`);
+  }
+
+  return output.join('\n');
+}
+
+function renderEpubInline(text, footnoteNumbers) {
+  const tokenPattern = /`([^`\n]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\[\^([^\]]+)\]/g;
+  let output = '';
+  let cursor = 0;
+
+  for (const match of text.matchAll(tokenPattern)) {
+    output += escapeXml(text.slice(cursor, match.index));
+    if (match[1] != null) output += `<code>${escapeXml(match[1])}</code>`;
+    else if (match[2] != null) output += `<strong>${renderEpubInline(match[2], footnoteNumbers)}</strong>`;
+    else if (match[3] != null) output += `<em>${renderEpubInline(match[3], footnoteNumbers)}</em>`;
+    else if (match[4] != null) output += `<a href="${escapeXml(match[5])}">${escapeXml(match[4])}</a>`;
+    else {
+      const number = footnoteNumbers.get(match[6]);
+      output += `<a epub:type="noteref" href="notes.xhtml#note-${number}">${number}</a>`;
+    }
+    cursor = match.index + match[0].length;
+  }
+
+  return output + escapeXml(text.slice(cursor));
+}
+
 function buildFb2Notes(footnotes, footnoteNumbers) {
   if (!footnotes.length) return '';
   const sections = footnotes.map(note => `    <section id="note-${note.number}">\n      <title><p>${note.number}</p></title>\n      <p>${renderFb2Inline(note.text, footnoteNumbers)}</p>\n    </section>`).join('\n');
@@ -407,6 +626,10 @@ function fb2Person(person = {}, tag = 'author') {
   if (person.email) fields.push(`        <email>${escapeXml(person.email)}</email>`);
   if (person.homePage) fields.push(`        <home-page>${escapeXml(person.homePage)}</home-page>`);
   return `      <${tag}>\n${fields.join('\n')}\n      </${tag}>`;
+}
+
+function personName(person = {}) {
+  return authorName(person) || person.nickname || person.email || 'Неизвестный переводчик';
 }
 
 function buildPublishInfo(publish, sequence) {
