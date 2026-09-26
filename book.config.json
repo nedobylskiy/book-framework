@@ -8,6 +8,7 @@
     "lastName": "Фамилия"
   },
   "language": "ru",
+  "sourceLanguage": null,
   "buildSource": "original",
   "outputBaseName": "my-book",
   "genres": ["prose"],

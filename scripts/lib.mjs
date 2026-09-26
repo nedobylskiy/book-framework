@@ -56,6 +56,8 @@ export async function validateBook(bookDir = getBookDir(), { readText = true } =
     throw new Error('В book.config.json не указан список chapters.');
   }
 
+  validateFb2Metadata(config);
+
   const universe = resolveUniverse(config, bookDir);
 
   const sourceKind = config.buildSource ?? 'edited';
@@ -94,6 +96,27 @@ export async function validateBook(bookDir = getBookDir(), { readText = true } =
   }
 
   return { bookDir, config, chapters, sourceDir, universe };
+}
+
+function validateFb2Metadata(config) {
+  const settings = config.formats?.fb2 ?? {};
+  for (const [field, value] of [['language', settings.language ?? config.language], ['sourceLanguage', settings.sourceLanguage ?? config.sourceLanguage]]) {
+    if (value != null && (typeof value !== 'string' || !value.trim())) {
+      throw new Error(`${field} должен быть непустой строкой с кодом языка.`);
+    }
+  }
+
+  if (settings.translators != null && !Array.isArray(settings.translators)) {
+    throw new Error('formats.fb2.translators должен быть массивом.');
+  }
+  for (const [index, translator] of (settings.translators ?? []).entries()) {
+    if (!translator || typeof translator !== 'object' || Array.isArray(translator)) {
+      throw new Error(`Переводчик ${index + 1} в formats.fb2.translators должен быть объектом.`);
+    }
+    if (![translator.firstName, translator.middleName, translator.lastName, translator.nickname].some(Boolean)) {
+      throw new Error(`У переводчика ${index + 1} укажите имя, фамилию, отчество или nickname.`);
+    }
+  }
 }
 
 export async function loadBook(bookDir = getBookDir()) {

@@ -189,6 +189,7 @@ npx book universe
     "lastName": "Фамилия"
   },
   "language": "ru",
+  "sourceLanguage": "en",
   "buildSource": "edited",
   "outputBaseName": "my-book",
   "genres": ["prose"],
@@ -204,6 +205,13 @@ npx book universe
     },
     "fb2": {
       "cover": "assets/cover.jpg",
+      "translators": [
+        {
+          "firstName": "Имя",
+          "middleName": "Отчество",
+          "lastName": "Переводчика"
+        }
+      ],
       "genres": ["sf_action", "humor_prose"],
       "keywords": ["приключения", "фантастика"],
       "sequence": {
@@ -245,7 +253,8 @@ npx book universe
 - `annotation` — аннотация;
 - `status` — например `idea`, `draft`, `editing`, `finished`, `published`;
 - `author` — автор; поддерживаются `firstName`, `middleName`, `lastName`, а для FB2 также `nickname`, `email`, `homePage`;
-- `language` — язык;
+- `language` — текущий язык текста, для FB2 записывается в `<lang>`;
+- `sourceLanguage` — опциональный язык оригинала, для FB2 записывается в `<src-lang>`;
 - `buildSource` — `original` или `edited`;
 - `outputBaseName` — базовое имя файлов в `dist/`;
 - `genres` — жанры по умолчанию;
@@ -277,6 +286,9 @@ npx book universe
 `formats.fb2` поддерживает:
 
 - `cover` — путь относительно корня книги к `.jpg`, `.jpeg` или `.png`; файл встраивается внутрь FB2 как `<binary>`;
+- `language` — текущий язык именно для FB2; переопределяет общее поле `language`;
+- `sourceLanguage` — язык оригинала именно для FB2; переопределяет общее поле `sourceLanguage`;
+- `translators` — массив переводчиков; каждый переводчик поддерживает `firstName`, `middleName`, `lastName`, `nickname`, `email` и `homePage` и записывается отдельным тегом `<translator>`;
 - `genres` — FB2-жанры именно для этого формата; если не указаны, используются общие `genres`;
 - `keywords` — ключевые слова;
 - `sequence.name` и `sequence.number` — книжный цикл и номер в нём;
@@ -290,7 +302,7 @@ npx book universe
 - `publish.year` — год;
 - `publish.isbn` — ISBN.
 
-Общие `title`, `annotation`, `author` и `language` автоматически попадают в FB2 metadata.
+Общие `title`, `annotation`, `author`, `language` и `sourceLanguage` автоматически попадают в FB2 metadata. Для непереводной книги `sourceLanguage` и `translators` можно не указывать.
 
 ## Сборка
 

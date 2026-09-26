@@ -84,6 +84,10 @@ async function createFb2({ chapters: selectedChapters, footnotes = [], idSuffix 
   const genres = (settings.genres ?? config.genres ?? ['prose']).map(g => `      <genre>${escapeXml(g)}</genre>`).join('\n');
   const annotation = config.annotation ? `\n      <annotation><p>${escapeXml(config.annotation)}</p></annotation>` : '';
   const keywords = settings.keywords?.length ? `\n      <keywords>${escapeXml(settings.keywords.join(', '))}</keywords>` : '';
+  const language = settings.language ?? config.language ?? 'ru';
+  const sourceLanguage = settings.sourceLanguage ?? config.sourceLanguage;
+  const sourceLanguageXml = sourceLanguage ? `\n      <src-lang>${escapeXml(sourceLanguage)}</src-lang>` : '';
+  const translatorsXml = (settings.translators ?? []).map(translator => `\n${fb2Person(translator, 'translator')}`).join('');
   const sequenceXml = sequence?.name ? `\n      <sequence name="${escapeXml(sequence.name)}"${sequence.number != null ? ` number="${escapeXml(sequence.number)}"` : ''}/>` : '';
   const cover = await loadImage(settings.cover, 'cover');
   const coverPage = cover ? `\n      <coverpage><image l:href="#${cover.id}"/></coverpage>` : '';
@@ -92,7 +96,7 @@ async function createFb2({ chapters: selectedChapters, footnotes = [], idSuffix 
     .map(image => `\n  <binary id="${image.id}" content-type="${image.mime}">${image.data}</binary>`)
     .join('');
 
-  return `<?xml version="1.0" encoding="utf-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n${genres}\n${fb2Author(config.author)}\n      <book-title>${escapeXml(config.title)}</book-title>${annotation}${keywords}\n      <lang>${escapeXml(config.language ?? 'ru')}</lang>${coverPage}${sequenceXml}\n    </title-info>\n    <document-info>\n      <author><nickname>${escapeXml(document.author ?? 'Book Framework')}</nickname></author>\n      <program-used>@nedobylskiy/book-framework</program-used>\n      <date value="${escapeXml(documentDate)}">${escapeXml(documentDate)}</date>\n      <id>${escapeXml(bookId)}</id>\n      <version>${escapeXml(version)}</version>\n    </document-info>${publishInfo}\n  </description>\n  <body>\n${sections}\n  </body>${notesBody}${binaries}\n</FictionBook>\n`;
+  return `<?xml version="1.0" encoding="utf-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n${genres}\n${fb2Person(config.author)}\n      <book-title>${escapeXml(config.title)}</book-title>${annotation}${keywords}${coverPage}\n      <lang>${escapeXml(language)}</lang>${sourceLanguageXml}${translatorsXml}${sequenceXml}\n    </title-info>\n    <document-info>\n      <author><nickname>${escapeXml(document.author ?? 'Book Framework')}</nickname></author>\n      <program-used>@nedobylskiy/book-framework</program-used>\n      <date value="${escapeXml(documentDate)}">${escapeXml(documentDate)}</date>\n      <id>${escapeXml(bookId)}</id>\n      <version>${escapeXml(version)}</version>\n    </document-info>${publishInfo}\n  </description>\n  <body>\n${sections}\n  </body>${notesBody}${binaries}\n</FictionBook>\n`;
 }
 
 function prepareManuscript(sourceChapters) {
@@ -394,15 +398,15 @@ function joinUrl(baseUrl, relativePath) {
   return `${baseUrl.replace(/\/+$/, '')}/${normalizeAssetPath(relativePath).replace(/^\/+/, '')}`;
 }
 
-function fb2Author(author = {}) {
+function fb2Person(person = {}, tag = 'author') {
   const fields = [];
-  if (author.firstName) fields.push(`        <first-name>${escapeXml(author.firstName)}</first-name>`);
-  if (author.middleName) fields.push(`        <middle-name>${escapeXml(author.middleName)}</middle-name>`);
-  if (author.lastName) fields.push(`        <last-name>${escapeXml(author.lastName)}</last-name>`);
-  if (author.nickname) fields.push(`        <nickname>${escapeXml(author.nickname)}</nickname>`);
-  if (author.email) fields.push(`        <email>${escapeXml(author.email)}</email>`);
-  if (author.homePage) fields.push(`        <home-page>${escapeXml(author.homePage)}</home-page>`);
-  return `      <author>\n${fields.join('\n')}\n      </author>`;
+  if (person.firstName) fields.push(`        <first-name>${escapeXml(person.firstName)}</first-name>`);
+  if (person.middleName) fields.push(`        <middle-name>${escapeXml(person.middleName)}</middle-name>`);
+  if (person.lastName) fields.push(`        <last-name>${escapeXml(person.lastName)}</last-name>`);
+  if (person.nickname) fields.push(`        <nickname>${escapeXml(person.nickname)}</nickname>`);
+  if (person.email) fields.push(`        <email>${escapeXml(person.email)}</email>`);
+  if (person.homePage) fields.push(`        <home-page>${escapeXml(person.homePage)}</home-page>`);
+  return `      <${tag}>\n${fields.join('\n')}\n      </${tag}>`;
 }
 
 function buildPublishInfo(publish, sequence) {
