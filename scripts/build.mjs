@@ -109,6 +109,7 @@ async function buildPdf() {
   const marginCm = settings.marginCm ?? 2;
   const includeCover = settings.includeCover ?? false;
   const pageNumbers = settings.pageNumbers ?? false;
+  const pageNumberOffset = settings.offset ?? 1;
   const coverPath = settings.cover ?? config.formats?.epub?.cover ?? config.formats?.fb2?.cover;
   if (includeCover && !coverPath) {
     throw new Error('Для formats.pdf.includeCover=true укажите formats.pdf.cover, formats.epub.cover или formats.fb2.cover.');
@@ -138,14 +139,12 @@ async function buildPdf() {
       height: `${heightCm}cm`,
       printBackground: true,
       preferCSSPageSize: true,
-      displayHeaderFooter: pageNumbers,
-      headerTemplate: '<span></span>',
-      footerTemplate: pageNumbers
-        ? '<div style="box-sizing:border-box;width:100%;padding:0 1cm;font-family:serif;font-size:9pt;text-align:center;color:#111;"><span class="pageNumber"></span></div>'
-        : '<span></span>'
+      displayHeaderFooter: false
     };
     const draftPdf = await page.pdf(pdfOptions);
-    const chapterPages = await findPdfChapterPages(draftPdf, manuscript.chapters.length);
+    const layout = await findPdfLayout(draftPdf, manuscript.chapters.length);
+    const firstContentPage = layout.chapterPages[0];
+    const chapterPageNumbers = layout.chapterPages.map(pageNumber => pageNumberOffset + pageNumber - firstContentPage);
     await buildMiddleHtml({
       settings: {
         ...middleSettings,
@@ -157,10 +156,18 @@ async function buildPdf() {
       },
       cover,
       pdfMode: true,
-      tocPageNumbers: chapterPages
+      tocPageNumbers: chapterPageNumbers
     });
     await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'networkidle0' });
-    await page.pdf({ ...pdfOptions, path: pdfPath });
+    const finalPdf = await page.pdf(pdfOptions);
+    const output = pageNumbers
+      ? await addPdfPageNumbers(finalPdf, {
+        firstPage: firstContentPage,
+        lastPage: layout.tocPage - 1,
+        offset: pageNumberOffset
+      })
+      : finalPdf;
+    await writeFile(pdfPath, output);
   } finally {
     await browser.close();
   }
@@ -194,29 +201,54 @@ function middleHtmlToc(chapters, title, format, { atEnd = false, pageNumbers = n
     contents = `    <${tag} class="toc-list ${modifier}">\n${links.map(link => `      <li>${link}</li>`).join('\n')}\n    </${tag}>`;
   }
   const classes = atEnd ? 'table-of-contents table-of-contents--at-end' : 'table-of-contents';
-  return `  <nav class="${classes}" aria-labelledby="toc-title">\n    <h1 id="toc-title">${escapeXml(title)}</h1>\n${contents}\n  </nav>`;
+  const marker = atEnd ? '<span class="pdf-chapter-marker">BOOK_FRAMEWORK_TOC</span>' : '';
+  return `  <nav class="${classes}" aria-labelledby="toc-title">\n    <h1 id="toc-title">${marker}${escapeXml(title)}</h1>\n${contents}\n  </nav>`;
 }
 
-async function findPdfChapterPages(pdfData, chapterCount) {
+async function findPdfLayout(pdfData, chapterCount) {
   const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const loadingTask = getDocument({ data: new Uint8Array(pdfData), disableWorker: true });
   const document = await loadingTask.promise;
   const pages = Array(chapterCount).fill(null);
+  let tocPage = null;
   try {
-    for (let pageNumber = 1; pageNumber <= document.numPages && pages.some(value => value == null); pageNumber += 1) {
+    for (let pageNumber = 1; pageNumber <= document.numPages && (pages.some(value => value == null) || tocPage == null); pageNumber += 1) {
       const page = await document.getPage(pageNumber);
       const text = await page.getTextContent();
       const contents = text.items.map(item => item.str).join(' ');
       for (let index = 0; index < chapterCount; index += 1) {
         if (pages[index] == null && contents.includes(`BOOK_FRAMEWORK_CHAPTER_${index + 1}`)) pages[index] = pageNumber;
       }
+      if (tocPage == null && contents.includes('BOOK_FRAMEWORK_TOC')) tocPage = pageNumber;
     }
   } finally {
     await loadingTask.destroy();
   }
   const missing = pages.findIndex(value => value == null);
   if (missing >= 0) throw new Error(`Не удалось определить страницу главы ${missing + 1} для PDF-оглавления.`);
-  return pages;
+  if (tocPage == null) throw new Error('Не удалось определить страницу PDF-оглавления.');
+  return { chapterPages: pages, tocPage };
+}
+
+async function addPdfPageNumbers(pdfData, { firstPage, lastPage, offset }) {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const document = await PDFDocument.load(pdfData);
+  const font = await document.embedFont(StandardFonts.TimesRoman);
+  const pages = document.getPages();
+  for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
+    const page = pages[pageNumber - 1];
+    const label = String(offset + pageNumber - firstPage);
+    const fontSize = 9;
+    const textWidth = font.widthOfTextAtSize(label, fontSize);
+    page.drawText(label, {
+      x: (page.getWidth() - textWidth) / 2,
+      y: 14,
+      size: fontSize,
+      font,
+      color: rgb(0.07, 0.07, 0.07)
+    });
+  }
+  return document.save();
 }
 
 function middleHtmlNotes() {

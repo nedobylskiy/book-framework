@@ -209,6 +209,9 @@ function validatePdfMetadata(config) {
   if (settings.cover != null && (typeof settings.cover !== 'string' || !settings.cover.trim())) {
     throw new Error('formats.pdf.cover должен быть непустым путём к изображению.');
   }
+  if (settings.offset != null && (!Number.isInteger(settings.offset) || settings.offset < 0)) {
+    throw new Error('formats.pdf.offset должен быть неотрицательным целым числом.');
+  }
   const width = settings.widthCm ?? 12.7;
   const height = settings.heightCm ?? 20.32;
   const margin = settings.marginCm ?? 2;
