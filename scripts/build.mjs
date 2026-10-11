@@ -75,7 +75,7 @@ async function buildFb2Chapters() {
   }
 }
 
-async function buildMiddleHtml({ settings = config.formats?.middleHtml ?? {}, cover = null, pdfMode = false } = {}) {
+async function buildMiddleHtml({ settings = config.formats?.middleHtml ?? {}, cover = null, pdfMode = false, tocPageNumbers = null, logOutput = true } = {}) {
   const language = settings.language ?? config.language ?? 'ru';
   const toc = settings.toc ?? {};
   const tocTitle = toc.title ?? 'Оглавление';
@@ -87,16 +87,18 @@ async function buildMiddleHtml({ settings = config.formats?.middleHtml ?? {}, co
 
   const coverPage = cover ? `  <section class="pdf-cover" aria-label="Обложка">\n    <img src="data:${cover.mime};base64,${cover.data}" alt="Обложка: ${escapeXml(config.title)}">\n  </section>\n` : '';
   const titlePage = `  <section class="title-page" aria-labelledby="book-title">\n    <div class="title-page__main">\n      <h1 id="book-title">${escapeXml(config.title)}</h1>\n      <p class="title-page__author">${escapeXml(authorName(config.author))}</p>\n    </div>\n    <p class="title-page__year">${escapeXml(year)}</p>\n  </section>`;
-  const tocPage = middleHtmlToc(chapters, tocTitle, tocFormat);
+  const tocPage = middleHtmlToc(chapters, tocTitle, tocFormat, { atEnd: pdfMode, pageNumbers: tocPageNumbers });
   const chapterClass = settings.chapterPageBreak === false ? 'book-content' : 'book-content book-content--chapter-breaks';
-  const chapterHtml = chapters.map(chapter => `    <section class="chapter" id="${chapter.id}">\n      <h1>${escapeXml(chapter.title)}</h1>\n${toMiddleHtml(chapter.text, manuscript.footnoteNumbers, images)}\n    </section>`).join('\n');
+  const chapterHtml = chapters.map((chapter, index) => `    <section class="chapter" id="${chapter.id}">\n      <h1>${pdfMode ? `<span class="pdf-chapter-marker">BOOK_FRAMEWORK_CHAPTER_${index + 1}</span>` : ''}${escapeXml(chapter.title)}</h1>\n${toMiddleHtml(chapter.text, manuscript.footnoteNumbers, images)}\n    </section>`).join('\n');
   const notes = middleHtmlNotes();
+  const tocBeforeContent = pdfMode ? '' : `${tocPage}\n`;
+  const tocAfterContent = pdfMode ? `\n${tocPage}` : '';
 
-  const html = `<!doctype html>\n<html lang="${escapeXml(language)}">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>${escapeXml(config.title)}</title>\n  <style>\n${stylesheet}\n  </style>\n</head>\n<body>\n${coverPage}${titlePage}\n${tocPage}\n  <main class="${chapterClass}">\n${chapterHtml}\n  </main>${notes}\n</body>\n</html>\n`;
+  const html = `<!doctype html>\n<html lang="${escapeXml(language)}">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>${escapeXml(config.title)}</title>\n  <style>\n${stylesheet}\n  </style>\n</head>\n<body>\n${coverPage}${titlePage}\n${tocBeforeContent}  <main class="${chapterClass}">\n${chapterHtml}\n  </main>${notes}${tocAfterContent}\n</body>\n</html>\n`;
 
   const path = join(outputDir, `${base}.middle.html`);
   await writeFile(path, html, 'utf8');
-  console.log(`Middle HTML: ${path}`);
+  if (logOutput) console.log(`Middle HTML: ${path}`);
   return path;
 }
 
@@ -107,6 +109,7 @@ async function buildPdf() {
   const marginCm = settings.marginCm ?? 2;
   const includeCover = settings.includeCover ?? false;
   const pageNumbers = settings.pageNumbers ?? false;
+  const pageNumberOffset = settings.offset ?? 1;
   const coverPath = settings.cover ?? config.formats?.epub?.cover ?? config.formats?.fb2?.cover;
   if (includeCover && !coverPath) {
     throw new Error('Для formats.pdf.includeCover=true укажите formats.pdf.cover, formats.epub.cover или formats.fb2.cover.');
@@ -123,25 +126,48 @@ async function buildPdf() {
       }
     },
     cover,
-    pdfMode: true
+    pdfMode: true,
+    logOutput: false
   });
   const pdfPath = join(outputDir, `${base}.pdf`);
   const browser = await puppeteer.launch({ headless: true });
   try {
     const page = await browser.newPage();
     await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'networkidle0' });
-    await page.pdf({
-      path: pdfPath,
+    const pdfOptions = {
       width: `${widthCm}cm`,
       height: `${heightCm}cm`,
       printBackground: true,
       preferCSSPageSize: true,
-      displayHeaderFooter: pageNumbers,
-      headerTemplate: '<span></span>',
-      footerTemplate: pageNumbers
-        ? '<div style="box-sizing:border-box;width:100%;padding:0 1cm;font-family:serif;font-size:9pt;text-align:center;color:#111;"><span class="pageNumber"></span></div>'
-        : '<span></span>'
+      displayHeaderFooter: false
+    };
+    const draftPdf = await page.pdf(pdfOptions);
+    const layout = await findPdfLayout(draftPdf, manuscript.chapters.length);
+    const firstContentPage = layout.chapterPages[0];
+    const chapterPageNumbers = layout.chapterPages.map(pageNumber => pageNumberOffset + pageNumber - firstContentPage);
+    await buildMiddleHtml({
+      settings: {
+        ...middleSettings,
+        page: {
+          ...(middleSettings.page ?? {}),
+          size: `${widthCm}cm ${heightCm}cm`,
+          margin: `${marginCm}cm`
+        }
+      },
+      cover,
+      pdfMode: true,
+      tocPageNumbers: chapterPageNumbers
     });
+    await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'networkidle0' });
+    const finalPdf = await page.pdf(pdfOptions);
+    const output = pageNumbers
+      ? await addPdfPageNumbers(finalPdf, {
+        firstPage: firstContentPage,
+        lastPage: layout.tocPage - 1,
+        offset: pageNumberOffset
+      })
+      : finalPdf;
+    await writeFile(pdfPath, output);
   } finally {
     await browser.close();
   }
@@ -154,15 +180,19 @@ async function middleHtmlStyles(settings, { pdfMode = false } = {}) {
   const defaults = `    @page { ${pageRules} }\n    :root { color-scheme: light; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; }\n    * { box-sizing: border-box; }\n    body { margin: 0; color: #111; background: #fff; }\n    .title-page { min-height: 100vh; display: flex; flex-direction: column; text-align: center; break-after: page; page-break-after: always; }\n    .title-page__main { margin: auto 0; }\n    .title-page h1 { margin: 0 0 1.25rem; font-size: 2.2rem; }\n    .title-page__author { margin: 0; font-size: 1.2rem; text-indent: 0; }\n    .title-page__year { margin: auto 0 0; text-indent: 0; }\n    .table-of-contents { break-after: page; page-break-after: always; }\n    .table-of-contents h1, .chapter > h1, .notes > h1 { text-align: center; }\n    .toc-list { padding: 0; list-style-position: inside; }\n    .toc-list--plain { list-style: none; }\n    .toc-list li, .toc-plain-entry { margin: 0.6em 0; }\n    .toc-list a, .toc-plain-entry a { color: inherit; text-decoration: none; }\n    .chapter + .chapter { margin-top: 3rem; }\n    .book-content--chapter-breaks .chapter + .chapter { break-before: page; page-break-before: always; margin-top: 0; }\n    p { margin: 0 0 0.7em; text-indent: 1.5em; }\n    pre { font-family: ui-monospace, "Cascadia Mono", monospace; white-space: pre-wrap; }\n    figure { margin: 1.5em auto; text-align: center; }\n    img { max-width: 100%; height: auto; }\n    hr.scene-break { width: 20%; margin: 1.75em auto; border: 0; border-top: 1px solid currentColor; }\n    .notes { break-before: page; page-break-before: always; }\n    .notes p { text-indent: 0; }\n    @media screen { body { max-width: 760px; margin: 0 auto; padding: 3rem; } }`;
 
   const coverStyles = `    @page cover { ${page.size ? `size: ${page.size};` : ''} margin: 0; }\n    @page content { ${pageRules} }\n    .pdf-cover { page: cover; width: 100%; height: 100vh; display: flex; align-items: center; justify-content: center; break-after: page; page-break-after: always; }\n    .pdf-cover img { width: 100%; height: 100%; object-fit: contain; }\n    .title-page, .table-of-contents, .book-content, .notes { page: content; }`;
-  const pdfStyles = pdfMode ? `\n    .title-page { min-height: calc(100vh - 2 * ${page.margin}); }` : '';
+  const pdfStyles = pdfMode ? `\n    .title-page { min-height: calc(100vh - 2 * ${page.margin}); }\n    .table-of-contents--at-end { break-before: page; page-break-before: always; break-after: auto; page-break-after: auto; }\n    .pdf-chapter-marker { color: transparent; font-size: 0.1px; line-height: 0; }\n    .toc-row { display: flex; align-items: baseline; gap: 0.4em; }\n    .toc-row a { flex: 0 1 auto; }\n    .toc-leader { flex: 1 1 auto; border-bottom: 1px dotted currentColor; transform: translateY(-0.25em); }\n    .toc-page-number { flex: 0 0 auto; font-variant-numeric: tabular-nums; }` : '';
   if (!settings.stylesheet) return `${defaults}\n${coverStyles}${pdfStyles}`;
   const path = resolve(bookDir, normalizeAssetPath(settings.stylesheet));
   if (!path.startsWith(bookDir + sep) && path !== bookDir) throw new Error(`Путь Middle HTML stylesheet выходит за пределы репозитория: ${settings.stylesheet}`);
   return `${defaults}\n${coverStyles}${pdfStyles}\n\n    /* Custom stylesheet */\n${await readFile(path, 'utf8')}`;
 }
 
-function middleHtmlToc(chapters, title, format) {
-  const links = chapters.map(chapter => `<a href="#${chapter.id}">${escapeXml(chapter.title)}</a>`);
+function middleHtmlToc(chapters, title, format, { atEnd = false, pageNumbers = null } = {}) {
+  const links = chapters.map((chapter, index) => {
+    const link = `<a href="#${chapter.id}">${escapeXml(chapter.title)}</a>`;
+    if (!pageNumbers) return link;
+    return `<span class="toc-row">${link}<span class="toc-leader" aria-hidden="true"></span><span class="toc-page-number">${pageNumbers[index]}</span></span>`;
+  });
   let contents;
   if (format === 'plain') contents = links.map(link => `    <p class="toc-plain-entry">${link}</p>`).join('\n');
   else {
@@ -170,7 +200,55 @@ function middleHtmlToc(chapters, title, format) {
     const modifier = format === 'numbered' ? 'toc-list--numbered' : 'toc-list--plain';
     contents = `    <${tag} class="toc-list ${modifier}">\n${links.map(link => `      <li>${link}</li>`).join('\n')}\n    </${tag}>`;
   }
-  return `  <nav class="table-of-contents" aria-labelledby="toc-title">\n    <h1 id="toc-title">${escapeXml(title)}</h1>\n${contents}\n  </nav>`;
+  const classes = atEnd ? 'table-of-contents table-of-contents--at-end' : 'table-of-contents';
+  const marker = atEnd ? '<span class="pdf-chapter-marker">BOOK_FRAMEWORK_TOC</span>' : '';
+  return `  <nav class="${classes}" aria-labelledby="toc-title">\n    <h1 id="toc-title">${marker}${escapeXml(title)}</h1>\n${contents}\n  </nav>`;
+}
+
+async function findPdfLayout(pdfData, chapterCount) {
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const loadingTask = getDocument({ data: new Uint8Array(pdfData), disableWorker: true });
+  const document = await loadingTask.promise;
+  const pages = Array(chapterCount).fill(null);
+  let tocPage = null;
+  try {
+    for (let pageNumber = 1; pageNumber <= document.numPages && (pages.some(value => value == null) || tocPage == null); pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const text = await page.getTextContent();
+      const contents = text.items.map(item => item.str).join(' ');
+      for (let index = 0; index < chapterCount; index += 1) {
+        if (pages[index] == null && contents.includes(`BOOK_FRAMEWORK_CHAPTER_${index + 1}`)) pages[index] = pageNumber;
+      }
+      if (tocPage == null && contents.includes('BOOK_FRAMEWORK_TOC')) tocPage = pageNumber;
+    }
+  } finally {
+    await loadingTask.destroy();
+  }
+  const missing = pages.findIndex(value => value == null);
+  if (missing >= 0) throw new Error(`Не удалось определить страницу главы ${missing + 1} для PDF-оглавления.`);
+  if (tocPage == null) throw new Error('Не удалось определить страницу PDF-оглавления.');
+  return { chapterPages: pages, tocPage };
+}
+
+async function addPdfPageNumbers(pdfData, { firstPage, lastPage, offset }) {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const document = await PDFDocument.load(pdfData);
+  const font = await document.embedFont(StandardFonts.TimesRoman);
+  const pages = document.getPages();
+  for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
+    const page = pages[pageNumber - 1];
+    const label = String(offset + pageNumber - firstPage);
+    const fontSize = 9;
+    const textWidth = font.widthOfTextAtSize(label, fontSize);
+    page.drawText(label, {
+      x: (page.getWidth() - textWidth) / 2,
+      y: 14,
+      size: fontSize,
+      font,
+      color: rgb(0.07, 0.07, 0.07)
+    });
+  }
+  return document.save();
 }
 
 function middleHtmlNotes() {

@@ -36,6 +36,8 @@
   ],
   "license": "UNLICENSED",
   "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.4.299",
     "puppeteer": "^25.13.0",
     "yazl": "^3.3.1"
   }
