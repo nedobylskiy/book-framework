@@ -32,6 +32,7 @@ npx book build --format txt
 npx book build --format fb2
 npx book build --format epub
 npx book build --format middle-html
+npx book build --format pdf
 npx book build-chapters
 npx book build --format fb2 --chapters
 npx book new-chapter forest-meeting --title "Встреча в лесу"
@@ -48,6 +49,7 @@ CLI всегда работает с текущим каталогом книг�
     "build": "book build",
     "build:epub": "book build --format epub",
     "build:middle-html": "book build --format middle-html",
+    "build:pdf": "book build --format pdf",
     "build:chapters": "book build-chapters",
     "validate": "book validate",
     "chapter": "book new-chapter"
@@ -385,19 +387,48 @@ npx book universe
 
 Локальные изображения кодируются прямо в HTML как data URI, поэтому файл можно передавать PDF-генератору без каталога сопутствующих ресурсов. `---` создаёт тот же короткий центрированный `scene-break`, что и EPUB.
 
+## Настройки PDF
+
+`book build --format pdf` сначала создаёт `dist/<имя>.middle.html`, а затем печатает его в `dist/<имя>.pdf` через Puppeteer и совместимую версию Chromium из npm-пакета.
+
+```json
+"formats": {
+  "pdf": {
+    "widthCm": 14.8,
+    "heightCm": 21,
+    "marginCm": 1.5,
+    "includeCover": false,
+    "cover": "assets/cover.jpg"
+  }
+}
+```
+
+`formats.pdf` поддерживает:
+
+- `widthCm` — ширина страницы в сантиметрах, по умолчанию `21`;
+- `heightCm` — высота страницы в сантиметрах, по умолчанию `29.7`;
+- `marginCm` — одинаковые поля со всех сторон в сантиметрах, по умолчанию `2`;
+- `includeCover` — добавлять ли обложку первой страницей, по умолчанию `false`;
+- `cover` — путь к JPG, JPEG или PNG относительно корня книги. Если не указан, используется `formats.epub.cover`, затем `formats.fb2.cover`.
+
+Заголовок, автор, год, оглавление, стили и разрывы глав PDF наследует из Middle HTML. Размер и поля из `formats.pdf` имеют приоритет над `formats.middleHtml.page`, чтобы промежуточный HTML точно соответствовал итоговому PDF. Обложка, если включена, выводится без полей и вписывается в страницу без обрезки.
+
+Для GitHub Actions не требуется устанавливать системный Chrome: обычный `npm ci` устанавливает Puppeteer и его совместимый Chromium. После этого достаточно запустить `npx book build` или `npx book build --format pdf`. Если в CI используется кеш, кешируйте npm стандартным `actions/setup-node`, но не задавайте `PUPPETEER_SKIP_DOWNLOAD`.
+
 ## Сборка
 
 ```sh
 book build
 ```
 
-Создаёт TXT, FB2, EPUB и Middle HTML в `dist/`.
+Создаёт TXT, FB2, EPUB, Middle HTML и PDF в `dist/`.
 
 ```sh
 book build --format txt
 book build --format fb2
 book build --format epub
 book build --format middle-html
+book build --format pdf
 ```
 
 ### Отдельный FB2 для каждой главы
