@@ -400,6 +400,19 @@ npx book universe
     "includeCover": false,
     "pageNumbers": true,
     "offset": 1,
+    "footerBottomCm": 1.25,
+    "pageNumberAlignment": "outer",
+    "bodyFont": "Literata",
+    "pageNumberFont": "Literata",
+    "fonts": [
+      {
+        "family": "Literata",
+        "regular": "assets/fonts/Literata-Regular.ttf",
+        "italic": "assets/fonts/Literata-Italic.ttf",
+        "bold": "assets/fonts/Literata-Bold.ttf",
+        "boldItalic": "assets/fonts/Literata-BoldItalic.ttf"
+      }
+    ],
     "cover": "assets/cover.jpg"
   }
 }
@@ -413,7 +426,30 @@ npx book universe
 - `includeCover` — добавлять ли обложку первой страницей, по умолчанию `false`;
 - `pageNumbers` — показывать номера страниц основного текста по центру нижнего поля, по умолчанию `false`; на обложке, титульной странице и страницах оглавления номера не выводятся;
 - `offset` — номер, с которого начинается нумерация основного текста, по умолчанию `1`; это же смещение используется для номеров глав в оглавлении;
+- `footerBottomCm` — расстояние от нижнего края листа до базовой линии номера страницы в сантиметрах, по умолчанию `0.5`; увеличьте значение, например до `1.25`, чтобы поднять колонтитул внутрь безопасной области печати;
+- `pageNumberAlignment` — `center` для номера по центру или `outer` для зеркального размещения у внешнего края разворота; в режиме `outer` нечётные номера находятся справа, чётные слева, а отступ от края берётся из `marginCm`;
+- `fonts` — массив локальных шрифтов с полями `family`, `regular`, `italic`, `bold` и `boldItalic`; поддерживаются TTF, OTF, WOFF и WOFF2, а файлы встраиваются в промежуточный HTML как data URI;
+- `bodyFont` — семейство из `fonts`, используемое для текста книги;
+- `pageNumberFont` — семейство из `fonts`, используемое для добавляемых номеров страниц; если поле отсутствует, используется `bodyFont`;
+- `fontStylesheet` — альтернативный HTML/CSS-способ: путь к CSS-файлу с собственными правилами `@font-face`; относительные URL внутри него разрешаются от корня книжного репозитория;
 - `cover` — путь к JPG, JPEG или PNG относительно корня книги. Если не указан, используется `formats.epub.cover`, затем `formats.fb2.cover`.
+
+Пример CSS-варианта:
+
+```css
+@font-face {
+  font-family: "Literata";
+  src: url("assets/fonts/Literata-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+
+:root {
+  font-family: "Literata", Georgia, serif;
+}
+```
+
+Сохраните его, например, как `assets/pdf-fonts.css` и укажите `"fontStylesheet": "assets/pdf-fonts.css"`. Перед печатью сборщик ждёт завершения загрузки HTML-шрифтов. Если файл из JSON или CSS не найден, выводится предупреждение, а сборка продолжается с резервным шрифтом. Проверьте лицензию выбранного шрифта: техническая возможность встраивания не означает разрешение на коммерческое использование.
 
 Заголовок, автор, год, стили и разрывы глав PDF наследует из Middle HTML. В PDF оглавление переносится в конец книги. Сборщик выполняет два прохода: определяет фактическую стартовую страницу каждой главы, а затем добавляет эти номера в оглавление. Эта нумерация внутри оглавления создаётся всегда и не зависит от `pageNumbers`; само поле `pageNumbers` управляет только номерами основного текста.
 

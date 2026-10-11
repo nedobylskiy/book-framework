@@ -212,11 +212,42 @@ function validatePdfMetadata(config) {
   if (settings.offset != null && (!Number.isInteger(settings.offset) || settings.offset < 0)) {
     throw new Error('formats.pdf.offset должен быть неотрицательным целым числом.');
   }
+  if (settings.footerBottomCm != null && (typeof settings.footerBottomCm !== 'number' || !Number.isFinite(settings.footerBottomCm) || settings.footerBottomCm < 0)) {
+    throw new Error('formats.pdf.footerBottomCm должен быть неотрицательным числом.');
+  }
+  if (settings.pageNumberAlignment != null && !['center', 'outer'].includes(settings.pageNumberAlignment)) {
+    throw new Error('formats.pdf.pageNumberAlignment должен быть center или outer.');
+  }
+  for (const field of ['bodyFont', 'pageNumberFont', 'fontStylesheet']) {
+    if (settings[field] != null && (typeof settings[field] !== 'string' || !settings[field].trim())) {
+      throw new Error(`formats.pdf.${field} должен быть непустой строкой.`);
+    }
+  }
+  if (settings.fonts != null && !Array.isArray(settings.fonts)) {
+    throw new Error('formats.pdf.fonts должен быть массивом.');
+  }
+  for (const [index, font] of (settings.fonts ?? []).entries()) {
+    if (!font || typeof font !== 'object' || Array.isArray(font)) {
+      throw new Error(`Шрифт ${index + 1} в formats.pdf.fonts должен быть объектом.`);
+    }
+    if (typeof font.family !== 'string' || !font.family.trim()) {
+      throw new Error(`У шрифта ${index + 1} в formats.pdf.fonts необходимо указать family.`);
+    }
+    for (const field of ['regular', 'italic', 'bold', 'boldItalic']) {
+      if (font[field] != null && (typeof font[field] !== 'string' || !font[field].trim())) {
+        throw new Error(`formats.pdf.fonts[${index}].${field} должен быть непустым путём.`);
+      }
+    }
+  }
   const width = settings.widthCm ?? 12.7;
   const height = settings.heightCm ?? 20.32;
   const margin = settings.marginCm ?? 2;
+  const footerBottom = settings.footerBottomCm ?? 0.5;
   if (margin * 2 >= Math.min(width, height)) {
     throw new Error('formats.pdf.marginCm должен оставлять положительную область страницы.');
+  }
+  if (footerBottom >= height) {
+    throw new Error('formats.pdf.footerBottomCm должен быть меньше высоты страницы.');
   }
 }
 

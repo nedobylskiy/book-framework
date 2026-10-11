@@ -75,14 +75,14 @@ async function buildFb2Chapters() {
   }
 }
 
-async function buildMiddleHtml({ settings = config.formats?.middleHtml ?? {}, cover = null, pdfMode = false, tocPageNumbers = null, logOutput = true } = {}) {
+async function buildMiddleHtml({ settings = config.formats?.middleHtml ?? {}, cover = null, pdfMode = false, tocPageNumbers = null, logOutput = true, additionalStyles = '' } = {}) {
   const language = settings.language ?? config.language ?? 'ru';
   const toc = settings.toc ?? {};
   const tocTitle = toc.title ?? 'Оглавление';
   const tocFormat = toc.format ?? 'list';
   const year = settings.year ?? config.formats?.fb2?.publish?.year ?? new Date().getFullYear();
   const images = await loadBodyImages(manuscript.chapters);
-  const stylesheet = await middleHtmlStyles(settings, { pdfMode });
+  const stylesheet = `${await middleHtmlStyles(settings, { pdfMode })}${additionalStyles ? `\n${additionalStyles}` : ''}`;
   const chapters = manuscript.chapters.map((chapter, index) => ({ ...chapter, id: `chapter-${index + 1}` }));
 
   const coverPage = cover ? `  <section class="pdf-cover" aria-label="Обложка">\n    <img src="data:${cover.mime};base64,${cover.data}" alt="Обложка: ${escapeXml(config.title)}">\n  </section>\n` : '';
@@ -94,7 +94,8 @@ async function buildMiddleHtml({ settings = config.formats?.middleHtml ?? {}, co
   const tocBeforeContent = pdfMode ? '' : `${tocPage}\n`;
   const tocAfterContent = pdfMode ? `\n${tocPage}` : '';
 
-  const html = `<!doctype html>\n<html lang="${escapeXml(language)}">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>${escapeXml(config.title)}</title>\n  <style>\n${stylesheet}\n  </style>\n</head>\n<body>\n${coverPage}${titlePage}\n${tocBeforeContent}  <main class="${chapterClass}">\n${chapterHtml}\n  </main>${notes}${tocAfterContent}\n</body>\n</html>\n`;
+  const baseElement = pdfMode ? `\n  <base href="${escapeXml(pathToFileURL(bookDir + sep).href)}">` : '';
+  const html = `<!doctype html>\n<html lang="${escapeXml(language)}">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">${baseElement}\n  <title>${escapeXml(config.title)}</title>\n  <style>\n${stylesheet}\n  </style>\n</head>\n<body>\n${coverPage}${titlePage}\n${tocBeforeContent}  <main class="${chapterClass}">\n${chapterHtml}\n  </main>${notes}${tocAfterContent}\n</body>\n</html>\n`;
 
   const path = join(outputDir, `${base}.middle.html`);
   await writeFile(path, html, 'utf8');
@@ -110,6 +111,9 @@ async function buildPdf() {
   const includeCover = settings.includeCover ?? false;
   const pageNumbers = settings.pageNumbers ?? false;
   const pageNumberOffset = settings.offset ?? 1;
+  const footerBottomCm = settings.footerBottomCm ?? 0.5;
+  const pageNumberAlignment = settings.pageNumberAlignment ?? 'center';
+  const pdfFonts = await loadPdfFonts(settings);
   const coverPath = settings.cover ?? config.formats?.epub?.cover ?? config.formats?.fb2?.cover;
   if (includeCover && !coverPath) {
     throw new Error('Для formats.pdf.includeCover=true укажите formats.pdf.cover, formats.epub.cover или formats.fb2.cover.');
@@ -127,13 +131,20 @@ async function buildPdf() {
     },
     cover,
     pdfMode: true,
-    logOutput: false
+    logOutput: false,
+    additionalStyles: pdfFonts.styles
   });
   const pdfPath = join(outputDir, `${base}.pdf`);
   const browser = await puppeteer.launch({ headless: true });
   try {
     const page = await browser.newPage();
+    page.on('requestfailed', request => {
+      if (request.resourceType() === 'font') {
+        console.warn(`Предупреждение: браузер не смог загрузить шрифт ${request.url()}. Используется резервный шрифт.`);
+      }
+    });
     await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'networkidle0' });
+    await waitForPdfFonts(page);
     const pdfOptions = {
       width: `${widthCm}cm`,
       height: `${heightCm}cm`,
@@ -156,15 +167,21 @@ async function buildPdf() {
       },
       cover,
       pdfMode: true,
-      tocPageNumbers: chapterPageNumbers
+      tocPageNumbers: chapterPageNumbers,
+      additionalStyles: pdfFonts.styles
     });
     await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'networkidle0' });
+    await waitForPdfFonts(page);
     const finalPdf = await page.pdf(pdfOptions);
     const output = pageNumbers
       ? await addPdfPageNumbers(finalPdf, {
         firstPage: firstContentPage,
         lastPage: layout.tocPage - 1,
-        offset: pageNumberOffset
+        offset: pageNumberOffset,
+        footerBottomCm,
+        horizontalMarginCm: marginCm,
+        alignment: pageNumberAlignment,
+        fontData: pdfFonts.pageNumberFontData
       })
       : finalPdf;
     await writeFile(pdfPath, output);
@@ -172,6 +189,16 @@ async function buildPdf() {
     await browser.close();
   }
   console.log(`PDF: ${pdfPath}`);
+}
+
+async function waitForPdfFonts(page) {
+  const failedFamilies = await page.evaluate(async () => {
+    await document.fonts.ready;
+    return [...document.fonts].filter(font => font.status === 'error').map(font => font.family);
+  });
+  for (const family of new Set(failedFamilies)) {
+    console.warn(`Предупреждение: шрифт ${family} не загрузился в HTML. Используется резервный шрифт.`);
+  }
 }
 
 async function middleHtmlStyles(settings, { pdfMode = false } = {}) {
@@ -230,25 +257,105 @@ async function findPdfLayout(pdfData, chapterCount) {
   return { chapterPages: pages, tocPage };
 }
 
-async function addPdfPageNumbers(pdfData, { firstPage, lastPage, offset }) {
+async function addPdfPageNumbers(pdfData, { firstPage, lastPage, offset, footerBottomCm, horizontalMarginCm, alignment, fontData }) {
   const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
   const document = await PDFDocument.load(pdfData);
-  const font = await document.embedFont(StandardFonts.TimesRoman);
+  let font;
+  if (fontData) {
+    try {
+      const { default: fontkit } = await import('@pdf-lib/fontkit');
+      document.registerFontkit(fontkit);
+      font = await document.embedFont(fontData, { subset: true });
+    } catch (error) {
+      console.warn(`Предупреждение: не удалось встроить выбранный шрифт номеров страниц: ${error.message}. Используется резервный шрифт.`);
+    }
+  }
+  if (!font) font = await document.embedFont(StandardFonts.TimesRoman);
   const pages = document.getPages();
   for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
     const page = pages[pageNumber - 1];
     const label = String(offset + pageNumber - firstPage);
     const fontSize = 9;
     const textWidth = font.widthOfTextAtSize(label, fontSize);
+    const horizontalMargin = horizontalMarginCm * 72 / 2.54;
+    const x = alignment === 'outer'
+      ? (Number(label) % 2 === 0 ? horizontalMargin : page.getWidth() - horizontalMargin - textWidth)
+      : (page.getWidth() - textWidth) / 2;
     page.drawText(label, {
-      x: (page.getWidth() - textWidth) / 2,
-      y: 14,
+      x,
+      y: footerBottomCm * 72 / 2.54,
       size: fontSize,
       font,
       color: rgb(0.07, 0.07, 0.07)
     });
   }
   return document.save();
+}
+
+async function loadPdfFonts(settings) {
+  const faces = [];
+  const regularFonts = new Map();
+  for (const font of settings.fonts ?? []) {
+    for (const [field, weight, style] of [
+      ['regular', 400, 'normal'],
+      ['italic', 400, 'italic'],
+      ['bold', 700, 'normal'],
+      ['boldItalic', 700, 'italic']
+    ]) {
+      if (!font[field]) continue;
+      const loaded = await loadPdfFontFile(font[field], `${font.family} ${field}`);
+      if (!loaded) continue;
+      faces.push(`    @font-face { font-family: "${escapeCssString(font.family)}"; src: url("data:${loaded.mime};base64,${loaded.data.toString('base64')}") format("${loaded.format}"); font-weight: ${weight}; font-style: ${style}; font-display: block; }`);
+      if (field === 'regular') regularFonts.set(font.family, loaded.data);
+    }
+  }
+
+  if (settings.fontStylesheet) {
+    try {
+      const path = resolve(bookDir, normalizeAssetPath(settings.fontStylesheet));
+      if (!path.startsWith(bookDir + sep) && path !== bookDir) throw new Error('путь выходит за пределы репозитория');
+      faces.push(`    /* PDF font stylesheet */\n${await readFile(path, 'utf8')}`);
+    } catch (error) {
+      console.warn(`Предупреждение: не удалось загрузить formats.pdf.fontStylesheet (${settings.fontStylesheet}): ${error.message}. Используется резервный шрифт.`);
+    }
+  }
+
+  const bodyFont = settings.bodyFont;
+  if (bodyFont) faces.push(`    :root { font-family: "${escapeCssString(bodyFont)}", Georgia, "Times New Roman", serif; }`);
+  if (bodyFont && !settings.fontStylesheet && !regularFonts.has(bodyFont)) {
+    console.warn(`Предупреждение: regular-файл шрифта "${bodyFont}" для текста не найден. Используется резервный шрифт.`);
+  }
+  const pageNumberFamily = settings.pageNumbers ? settings.pageNumberFont ?? bodyFont : null;
+  if (pageNumberFamily && !regularFonts.has(pageNumberFamily)) {
+    console.warn(`Предупреждение: regular-файл шрифта "${pageNumberFamily}" для номеров страниц не найден. Используется резервный шрифт.`);
+  }
+  return {
+    styles: faces.join('\n'),
+    pageNumberFontData: pageNumberFamily ? regularFonts.get(pageNumberFamily) ?? null : null
+  };
+}
+
+async function loadPdfFontFile(relativePath, label) {
+  try {
+    const path = resolve(bookDir, normalizeAssetPath(relativePath));
+    if (!path.startsWith(bookDir + sep) && path !== bookDir) throw new Error('путь выходит за пределы репозитория');
+    const extension = extname(path).toLowerCase();
+    const types = {
+      '.ttf': { mime: 'font/ttf', format: 'truetype' },
+      '.otf': { mime: 'font/otf', format: 'opentype' },
+      '.woff': { mime: 'font/woff', format: 'woff' },
+      '.woff2': { mime: 'font/woff2', format: 'woff2' }
+    };
+    if (!types[extension]) throw new Error('поддерживаются TTF, OTF, WOFF и WOFF2');
+    return { ...types[extension], data: await readFile(path) };
+  } catch (error) {
+    console.warn(`Предупреждение: не удалось загрузить шрифт ${label} (${relativePath}): ${error.message}. Используется резервный шрифт.`);
+    return null;
+  }
+}
+
+function escapeCssString(value) {
+  return String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
 }
 
 function middleHtmlNotes() {
