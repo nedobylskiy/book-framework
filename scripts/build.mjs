@@ -111,6 +111,7 @@ async function buildPdf() {
   const pageNumbers = settings.pageNumbers ?? false;
   const pageNumberOffset = settings.offset ?? 1;
   const footerBottomCm = settings.footerBottomCm ?? 0.5;
+  const pageNumberAlignment = settings.pageNumberAlignment ?? 'center';
   const coverPath = settings.cover ?? config.formats?.epub?.cover ?? config.formats?.fb2?.cover;
   if (includeCover && !coverPath) {
     throw new Error('Для formats.pdf.includeCover=true укажите formats.pdf.cover, formats.epub.cover или formats.fb2.cover.');
@@ -166,7 +167,9 @@ async function buildPdf() {
         firstPage: firstContentPage,
         lastPage: layout.tocPage - 1,
         offset: pageNumberOffset,
-        footerBottomCm
+        footerBottomCm,
+        horizontalMarginCm: marginCm,
+        alignment: pageNumberAlignment
       })
       : finalPdf;
     await writeFile(pdfPath, output);
@@ -232,7 +235,7 @@ async function findPdfLayout(pdfData, chapterCount) {
   return { chapterPages: pages, tocPage };
 }
 
-async function addPdfPageNumbers(pdfData, { firstPage, lastPage, offset, footerBottomCm }) {
+async function addPdfPageNumbers(pdfData, { firstPage, lastPage, offset, footerBottomCm, horizontalMarginCm, alignment }) {
   const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
   const document = await PDFDocument.load(pdfData);
   const font = await document.embedFont(StandardFonts.TimesRoman);
@@ -242,8 +245,12 @@ async function addPdfPageNumbers(pdfData, { firstPage, lastPage, offset, footerB
     const label = String(offset + pageNumber - firstPage);
     const fontSize = 9;
     const textWidth = font.widthOfTextAtSize(label, fontSize);
+    const horizontalMargin = horizontalMarginCm * 72 / 2.54;
+    const x = alignment === 'outer'
+      ? (Number(label) % 2 === 0 ? horizontalMargin : page.getWidth() - horizontalMargin - textWidth)
+      : (page.getWidth() - textWidth) / 2;
     page.drawText(label, {
-      x: (page.getWidth() - textWidth) / 2,
+      x,
       y: footerBottomCm * 72 / 2.54,
       size: fontSize,
       font,

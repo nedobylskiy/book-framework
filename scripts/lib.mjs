@@ -215,6 +215,9 @@ function validatePdfMetadata(config) {
   if (settings.footerBottomCm != null && (typeof settings.footerBottomCm !== 'number' || !Number.isFinite(settings.footerBottomCm) || settings.footerBottomCm < 0)) {
     throw new Error('formats.pdf.footerBottomCm должен быть неотрицательным числом.');
   }
+  if (settings.pageNumberAlignment != null && !['center', 'outer'].includes(settings.pageNumberAlignment)) {
+    throw new Error('formats.pdf.pageNumberAlignment должен быть center или outer.');
+  }
   const width = settings.widthCm ?? 12.7;
   const height = settings.heightCm ?? 20.32;
   const margin = settings.marginCm ?? 2;
