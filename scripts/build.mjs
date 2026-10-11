@@ -122,7 +122,7 @@ async function epubStyles(settings) {
     if (!path.startsWith(bookDir + sep) && path !== bookDir) throw new Error(`Путь EPUB stylesheet выходит за пределы репозитория: ${settings.stylesheet}`);
     return readFile(path, 'utf8');
   }
-  return `body { font-family: serif; line-height: 1.5; margin: 5%; }\nh1, h2, h3 { text-align: center; }\np { margin: 0 0 0.7em; text-indent: 1.5em; }\npre { font-family: monospace; white-space: pre-wrap; }\nimg { display: block; max-width: 100%; height: auto; margin: 1em auto; }\n.title-page, .cover { text-align: center; }\n.title-page p, .footnotes p { text-indent: 0; }\n`;
+  return `body { font-family: serif; line-height: 1.5; margin: 5%; }\nh1, h2, h3 { text-align: center; }\np { margin: 0 0 0.7em; text-indent: 1.5em; }\npre { font-family: monospace; white-space: pre-wrap; }\nimg { display: block; max-width: 100%; height: auto; margin: 1em auto; }\nhr.scene-break { width: 20%; margin: 1.75em auto; border: 0; border-top: 1px solid currentColor; }\n.title-page, .cover { text-align: center; }\n.title-page p, .footnotes p { text-indent: 0; }\n`;
 }
 
 function epubDocument(title, language, body, extraHead = '') {
@@ -488,7 +488,7 @@ function toEpub(text, footnoteNumbers, images) {
     }
     if (!line.trim()) continue;
     if (line.trim() === '---') {
-      output.push('    <hr/>');
+      output.push('    <hr class="scene-break"/>');
       continue;
     }
 
