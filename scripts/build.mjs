@@ -102,10 +102,11 @@ async function buildMiddleHtml({ settings = config.formats?.middleHtml ?? {}, co
 
 async function buildPdf() {
   const settings = config.formats?.pdf ?? {};
-  const widthCm = settings.widthCm ?? 21;
-  const heightCm = settings.heightCm ?? 29.7;
+  const widthCm = settings.widthCm ?? 12.7;
+  const heightCm = settings.heightCm ?? 20.32;
   const marginCm = settings.marginCm ?? 2;
   const includeCover = settings.includeCover ?? false;
+  const pageNumbers = settings.pageNumbers ?? false;
   const coverPath = settings.cover ?? config.formats?.epub?.cover ?? config.formats?.fb2?.cover;
   if (includeCover && !coverPath) {
     throw new Error('Для formats.pdf.includeCover=true укажите formats.pdf.cover, formats.epub.cover или formats.fb2.cover.');
@@ -135,7 +136,11 @@ async function buildPdf() {
       height: `${heightCm}cm`,
       printBackground: true,
       preferCSSPageSize: true,
-      displayHeaderFooter: false
+      displayHeaderFooter: pageNumbers,
+      headerTemplate: '<span></span>',
+      footerTemplate: pageNumbers
+        ? '<div style="box-sizing:border-box;width:100%;padding:0 1cm;font-family:serif;font-size:9pt;text-align:center;color:#111;"><span class="pageNumber"></span></div>'
+        : '<span></span>'
     });
   } finally {
     await browser.close();

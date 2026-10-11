@@ -201,14 +201,16 @@ function validatePdfMetadata(config) {
   if (settings.marginCm != null && (typeof settings.marginCm !== 'number' || !Number.isFinite(settings.marginCm) || settings.marginCm < 0)) {
     throw new Error('formats.pdf.marginCm должен быть неотрицательным числом.');
   }
-  if (settings.includeCover != null && typeof settings.includeCover !== 'boolean') {
-    throw new Error('formats.pdf.includeCover должен быть true или false.');
+  for (const field of ['includeCover', 'pageNumbers']) {
+    if (settings[field] != null && typeof settings[field] !== 'boolean') {
+      throw new Error(`formats.pdf.${field} должен быть true или false.`);
+    }
   }
   if (settings.cover != null && (typeof settings.cover !== 'string' || !settings.cover.trim())) {
     throw new Error('formats.pdf.cover должен быть непустым путём к изображению.');
   }
-  const width = settings.widthCm ?? 21;
-  const height = settings.heightCm ?? 29.7;
+  const width = settings.widthCm ?? 12.7;
+  const height = settings.heightCm ?? 20.32;
   const margin = settings.marginCm ?? 2;
   if (margin * 2 >= Math.min(width, height)) {
     throw new Error('formats.pdf.marginCm должен оставлять положительную область страницы.');
