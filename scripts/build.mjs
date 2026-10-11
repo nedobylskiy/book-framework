@@ -190,7 +190,7 @@ function epubPackage({ settings, language, publisher, isbn, translators, identif
     manifest.push('    <item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>');
     spine.push('    <itemref idref="title-page"/>');
   }
-  if (tocEnabled) spine.push('    <itemref idref="nav" linear="no"/>');
+  if (tocEnabled) spine.push('    <itemref idref="nav"/>');
   for (const chapter of chapterFiles) {
     manifest.push(`    <item id="${chapter.id}" href="${chapter.href}" media-type="application/xhtml+xml"/>`);
     spine.push(`    <itemref idref="${chapter.id}"/>`);
