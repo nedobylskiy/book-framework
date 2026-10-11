@@ -1,6 +1,6 @@
 {
   "name": "@nedobylskiy/book-framework",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "CLI framework for writing, editing, validating and building book repositories",
   "type": "module",
   "bin": {
@@ -20,6 +20,7 @@
     "build:chapters": "node bin/book.mjs build-chapters",
     "build:epub": "node bin/book.mjs build --format epub",
     "build:middle-html": "node bin/book.mjs build --format middle-html",
+    "build:pdf": "node bin/book.mjs build --format pdf",
     "validate": "node bin/book.mjs validate"
   },
   "keywords": [
@@ -35,6 +36,7 @@
   ],
   "license": "UNLICENSED",
   "dependencies": {
+    "puppeteer": "^25.13.0",
     "yazl": "^3.3.1"
   }
 }

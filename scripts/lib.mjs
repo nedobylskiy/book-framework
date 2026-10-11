@@ -59,6 +59,7 @@ export async function validateBook(bookDir = getBookDir(), { readText = true } =
   validateFb2Metadata(config);
   validateEpubMetadata(config);
   validateMiddleHtmlMetadata(config);
+  validatePdfMetadata(config);
 
   const universe = resolveUniverse(config, bookDir);
 
@@ -184,6 +185,35 @@ function validateMiddleHtmlMetadata(config) {
     if (page[field] != null && (typeof page[field] !== 'string' || !page[field].trim() || !cssPageValue.test(page[field]))) {
       throw new Error(`formats.middleHtml.page.${field} содержит недопустимое CSS-значение.`);
     }
+  }
+}
+
+function validatePdfMetadata(config) {
+  const settings = config.formats?.pdf ?? {};
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error('formats.pdf должен быть объектом.');
+  }
+  for (const field of ['widthCm', 'heightCm']) {
+    if (settings[field] != null && (typeof settings[field] !== 'number' || !Number.isFinite(settings[field]) || settings[field] <= 0)) {
+      throw new Error(`formats.pdf.${field} должен быть положительным числом.`);
+    }
+  }
+  if (settings.marginCm != null && (typeof settings.marginCm !== 'number' || !Number.isFinite(settings.marginCm) || settings.marginCm < 0)) {
+    throw new Error('formats.pdf.marginCm должен быть неотрицательным числом.');
+  }
+  for (const field of ['includeCover', 'pageNumbers']) {
+    if (settings[field] != null && typeof settings[field] !== 'boolean') {
+      throw new Error(`formats.pdf.${field} должен быть true или false.`);
+    }
+  }
+  if (settings.cover != null && (typeof settings.cover !== 'string' || !settings.cover.trim())) {
+    throw new Error('formats.pdf.cover должен быть непустым путём к изображению.');
+  }
+  const width = settings.widthCm ?? 12.7;
+  const height = settings.heightCm ?? 20.32;
+  const margin = settings.marginCm ?? 2;
+  if (margin * 2 >= Math.min(width, height)) {
+    throw new Error('formats.pdf.marginCm должен оставлять положительную область страницы.');
   }
 }
 

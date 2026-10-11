@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, extname, join, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import puppeteer from 'puppeteer';
 import yazl from 'yazl';
 import { authorName, escapeXml, loadBook } from './lib.mjs';
 
@@ -13,7 +15,7 @@ const { bookDir, config, chapters, outputDir } = await loadBook();
 const base = config.outputBaseName ?? config.id ?? 'book';
 const manuscript = prepareManuscript(chapters);
 
-if (!['all', 'txt', 'fb2', 'epub', 'middle-html'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
+if (!['all', 'txt', 'fb2', 'epub', 'middle-html', 'pdf'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
 if (chaptersMode && !['all', 'fb2'].includes(format)) throw new Error('--chapters поддерживается только для FB2.');
 
 if (!chaptersMode && (format === 'all' || format === 'txt')) await buildTxt();
@@ -22,7 +24,8 @@ if (format === 'all' || format === 'fb2') {
   else await buildFb2();
 }
 if (!chaptersMode && (format === 'all' || format === 'epub')) await buildEpub();
-if (!chaptersMode && (format === 'all' || format === 'middle-html')) await buildMiddleHtml();
+if (!chaptersMode && format === 'middle-html') await buildMiddleHtml();
+if (!chaptersMode && (format === 'all' || format === 'pdf')) await buildPdf();
 
 async function buildTxt() {
   const settings = config.formats?.txt ?? {};
@@ -72,39 +75,90 @@ async function buildFb2Chapters() {
   }
 }
 
-async function buildMiddleHtml() {
-  const settings = config.formats?.middleHtml ?? {};
+async function buildMiddleHtml({ settings = config.formats?.middleHtml ?? {}, cover = null, pdfMode = false } = {}) {
   const language = settings.language ?? config.language ?? 'ru';
   const toc = settings.toc ?? {};
   const tocTitle = toc.title ?? 'Оглавление';
   const tocFormat = toc.format ?? 'list';
   const year = settings.year ?? config.formats?.fb2?.publish?.year ?? new Date().getFullYear();
   const images = await loadBodyImages(manuscript.chapters);
-  const stylesheet = await middleHtmlStyles(settings);
+  const stylesheet = await middleHtmlStyles(settings, { pdfMode });
   const chapters = manuscript.chapters.map((chapter, index) => ({ ...chapter, id: `chapter-${index + 1}` }));
 
+  const coverPage = cover ? `  <section class="pdf-cover" aria-label="Обложка">\n    <img src="data:${cover.mime};base64,${cover.data}" alt="Обложка: ${escapeXml(config.title)}">\n  </section>\n` : '';
   const titlePage = `  <section class="title-page" aria-labelledby="book-title">\n    <div class="title-page__main">\n      <h1 id="book-title">${escapeXml(config.title)}</h1>\n      <p class="title-page__author">${escapeXml(authorName(config.author))}</p>\n    </div>\n    <p class="title-page__year">${escapeXml(year)}</p>\n  </section>`;
   const tocPage = middleHtmlToc(chapters, tocTitle, tocFormat);
   const chapterClass = settings.chapterPageBreak === false ? 'book-content' : 'book-content book-content--chapter-breaks';
   const chapterHtml = chapters.map(chapter => `    <section class="chapter" id="${chapter.id}">\n      <h1>${escapeXml(chapter.title)}</h1>\n${toMiddleHtml(chapter.text, manuscript.footnoteNumbers, images)}\n    </section>`).join('\n');
   const notes = middleHtmlNotes();
 
-  const html = `<!doctype html>\n<html lang="${escapeXml(language)}">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>${escapeXml(config.title)}</title>\n  <style>\n${stylesheet}\n  </style>\n</head>\n<body>\n${titlePage}\n${tocPage}\n  <main class="${chapterClass}">\n${chapterHtml}\n  </main>${notes}\n</body>\n</html>\n`;
+  const html = `<!doctype html>\n<html lang="${escapeXml(language)}">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>${escapeXml(config.title)}</title>\n  <style>\n${stylesheet}\n  </style>\n</head>\n<body>\n${coverPage}${titlePage}\n${tocPage}\n  <main class="${chapterClass}">\n${chapterHtml}\n  </main>${notes}\n</body>\n</html>\n`;
 
   const path = join(outputDir, `${base}.middle.html`);
   await writeFile(path, html, 'utf8');
   console.log(`Middle HTML: ${path}`);
+  return path;
 }
 
-async function middleHtmlStyles(settings) {
+async function buildPdf() {
+  const settings = config.formats?.pdf ?? {};
+  const widthCm = settings.widthCm ?? 12.7;
+  const heightCm = settings.heightCm ?? 20.32;
+  const marginCm = settings.marginCm ?? 2;
+  const includeCover = settings.includeCover ?? false;
+  const pageNumbers = settings.pageNumbers ?? false;
+  const coverPath = settings.cover ?? config.formats?.epub?.cover ?? config.formats?.fb2?.cover;
+  if (includeCover && !coverPath) {
+    throw new Error('Для formats.pdf.includeCover=true укажите formats.pdf.cover, formats.epub.cover или formats.fb2.cover.');
+  }
+  const cover = includeCover ? await loadImage(coverPath, 'cover') : null;
+  const middleSettings = config.formats?.middleHtml ?? {};
+  const htmlPath = await buildMiddleHtml({
+    settings: {
+      ...middleSettings,
+      page: {
+        ...(middleSettings.page ?? {}),
+        size: `${widthCm}cm ${heightCm}cm`,
+        margin: `${marginCm}cm`
+      }
+    },
+    cover,
+    pdfMode: true
+  });
+  const pdfPath = join(outputDir, `${base}.pdf`);
+  const browser = await puppeteer.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'networkidle0' });
+    await page.pdf({
+      path: pdfPath,
+      width: `${widthCm}cm`,
+      height: `${heightCm}cm`,
+      printBackground: true,
+      preferCSSPageSize: true,
+      displayHeaderFooter: pageNumbers,
+      headerTemplate: '<span></span>',
+      footerTemplate: pageNumbers
+        ? '<div style="box-sizing:border-box;width:100%;padding:0 1cm;font-family:serif;font-size:9pt;text-align:center;color:#111;"><span class="pageNumber"></span></div>'
+        : '<span></span>'
+    });
+  } finally {
+    await browser.close();
+  }
+  console.log(`PDF: ${pdfPath}`);
+}
+
+async function middleHtmlStyles(settings, { pdfMode = false } = {}) {
   const page = settings.page ?? {};
   const pageRules = [page.size ? `size: ${page.size};` : '', `margin: ${page.margin ?? '20mm'};`].filter(Boolean).join(' ');
   const defaults = `    @page { ${pageRules} }\n    :root { color-scheme: light; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; }\n    * { box-sizing: border-box; }\n    body { margin: 0; color: #111; background: #fff; }\n    .title-page { min-height: 100vh; display: flex; flex-direction: column; text-align: center; break-after: page; page-break-after: always; }\n    .title-page__main { margin: auto 0; }\n    .title-page h1 { margin: 0 0 1.25rem; font-size: 2.2rem; }\n    .title-page__author { margin: 0; font-size: 1.2rem; text-indent: 0; }\n    .title-page__year { margin: auto 0 0; text-indent: 0; }\n    .table-of-contents { break-after: page; page-break-after: always; }\n    .table-of-contents h1, .chapter > h1, .notes > h1 { text-align: center; }\n    .toc-list { padding: 0; list-style-position: inside; }\n    .toc-list--plain { list-style: none; }\n    .toc-list li, .toc-plain-entry { margin: 0.6em 0; }\n    .toc-list a, .toc-plain-entry a { color: inherit; text-decoration: none; }\n    .chapter + .chapter { margin-top: 3rem; }\n    .book-content--chapter-breaks .chapter + .chapter { break-before: page; page-break-before: always; margin-top: 0; }\n    p { margin: 0 0 0.7em; text-indent: 1.5em; }\n    pre { font-family: ui-monospace, "Cascadia Mono", monospace; white-space: pre-wrap; }\n    figure { margin: 1.5em auto; text-align: center; }\n    img { max-width: 100%; height: auto; }\n    hr.scene-break { width: 20%; margin: 1.75em auto; border: 0; border-top: 1px solid currentColor; }\n    .notes { break-before: page; page-break-before: always; }\n    .notes p { text-indent: 0; }\n    @media screen { body { max-width: 760px; margin: 0 auto; padding: 3rem; } }`;
 
-  if (!settings.stylesheet) return defaults;
+  const coverStyles = `    @page cover { ${page.size ? `size: ${page.size};` : ''} margin: 0; }\n    @page content { ${pageRules} }\n    .pdf-cover { page: cover; width: 100%; height: 100vh; display: flex; align-items: center; justify-content: center; break-after: page; page-break-after: always; }\n    .pdf-cover img { width: 100%; height: 100%; object-fit: contain; }\n    .title-page, .table-of-contents, .book-content, .notes { page: content; }`;
+  const pdfStyles = pdfMode ? `\n    .title-page { min-height: calc(100vh - 2 * ${page.margin}); }` : '';
+  if (!settings.stylesheet) return `${defaults}\n${coverStyles}${pdfStyles}`;
   const path = resolve(bookDir, normalizeAssetPath(settings.stylesheet));
   if (!path.startsWith(bookDir + sep) && path !== bookDir) throw new Error(`Путь Middle HTML stylesheet выходит за пределы репозитория: ${settings.stylesheet}`);
-  return `${defaults}\n\n    /* Custom stylesheet */\n${await readFile(path, 'utf8')}`;
+  return `${defaults}\n${coverStyles}${pdfStyles}\n\n    /* Custom stylesheet */\n${await readFile(path, 'utf8')}`;
 }
 
 function middleHtmlToc(chapters, title, format) {
