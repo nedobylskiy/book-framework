@@ -110,6 +110,7 @@ async function buildPdf() {
   const includeCover = settings.includeCover ?? false;
   const pageNumbers = settings.pageNumbers ?? false;
   const pageNumberOffset = settings.offset ?? 1;
+  const footerBottomCm = settings.footerBottomCm ?? 0.5;
   const coverPath = settings.cover ?? config.formats?.epub?.cover ?? config.formats?.fb2?.cover;
   if (includeCover && !coverPath) {
     throw new Error('Для formats.pdf.includeCover=true укажите formats.pdf.cover, formats.epub.cover или formats.fb2.cover.');
@@ -164,7 +165,8 @@ async function buildPdf() {
       ? await addPdfPageNumbers(finalPdf, {
         firstPage: firstContentPage,
         lastPage: layout.tocPage - 1,
-        offset: pageNumberOffset
+        offset: pageNumberOffset,
+        footerBottomCm
       })
       : finalPdf;
     await writeFile(pdfPath, output);
@@ -230,7 +232,7 @@ async function findPdfLayout(pdfData, chapterCount) {
   return { chapterPages: pages, tocPage };
 }
 
-async function addPdfPageNumbers(pdfData, { firstPage, lastPage, offset }) {
+async function addPdfPageNumbers(pdfData, { firstPage, lastPage, offset, footerBottomCm }) {
   const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
   const document = await PDFDocument.load(pdfData);
   const font = await document.embedFont(StandardFonts.TimesRoman);
@@ -242,7 +244,7 @@ async function addPdfPageNumbers(pdfData, { firstPage, lastPage, offset }) {
     const textWidth = font.widthOfTextAtSize(label, fontSize);
     page.drawText(label, {
       x: (page.getWidth() - textWidth) / 2,
-      y: 14,
+      y: footerBottomCm * 72 / 2.54,
       size: fontSize,
       font,
       color: rgb(0.07, 0.07, 0.07)

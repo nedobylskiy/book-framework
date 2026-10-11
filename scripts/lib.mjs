@@ -212,11 +212,18 @@ function validatePdfMetadata(config) {
   if (settings.offset != null && (!Number.isInteger(settings.offset) || settings.offset < 0)) {
     throw new Error('formats.pdf.offset должен быть неотрицательным целым числом.');
   }
+  if (settings.footerBottomCm != null && (typeof settings.footerBottomCm !== 'number' || !Number.isFinite(settings.footerBottomCm) || settings.footerBottomCm < 0)) {
+    throw new Error('formats.pdf.footerBottomCm должен быть неотрицательным числом.');
+  }
   const width = settings.widthCm ?? 12.7;
   const height = settings.heightCm ?? 20.32;
   const margin = settings.marginCm ?? 2;
+  const footerBottom = settings.footerBottomCm ?? 0.5;
   if (margin * 2 >= Math.min(width, height)) {
     throw new Error('formats.pdf.marginCm должен оставлять положительную область страницы.');
+  }
+  if (footerBottom >= height) {
+    throw new Error('formats.pdf.footerBottomCm должен быть меньше высоты страницы.');
   }
 }
 
