@@ -13,7 +13,7 @@ const { bookDir, config, chapters, outputDir } = await loadBook();
 const base = config.outputBaseName ?? config.id ?? 'book';
 const manuscript = prepareManuscript(chapters);
 
-if (!['all', 'txt', 'fb2', 'epub'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
+if (!['all', 'txt', 'fb2', 'epub', 'middle-html'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
 if (chaptersMode && !['all', 'fb2'].includes(format)) throw new Error('--chapters поддерживается только для FB2.');
 
 if (!chaptersMode && (format === 'all' || format === 'txt')) await buildTxt();
@@ -22,6 +22,7 @@ if (format === 'all' || format === 'fb2') {
   else await buildFb2();
 }
 if (!chaptersMode && (format === 'all' || format === 'epub')) await buildEpub();
+if (!chaptersMode && (format === 'all' || format === 'middle-html')) await buildMiddleHtml();
 
 async function buildTxt() {
   const settings = config.formats?.txt ?? {};
@@ -69,6 +70,59 @@ async function buildFb2Chapters() {
     await writeFile(path, xml, 'utf8');
     console.log(`FB2 chapter: ${path}`);
   }
+}
+
+async function buildMiddleHtml() {
+  const settings = config.formats?.middleHtml ?? {};
+  const language = settings.language ?? config.language ?? 'ru';
+  const toc = settings.toc ?? {};
+  const tocTitle = toc.title ?? 'Оглавление';
+  const tocFormat = toc.format ?? 'list';
+  const year = settings.year ?? config.formats?.fb2?.publish?.year ?? new Date().getFullYear();
+  const images = await loadBodyImages(manuscript.chapters);
+  const stylesheet = await middleHtmlStyles(settings);
+  const chapters = manuscript.chapters.map((chapter, index) => ({ ...chapter, id: `chapter-${index + 1}` }));
+
+  const titlePage = `  <section class="title-page" aria-labelledby="book-title">\n    <div class="title-page__main">\n      <h1 id="book-title">${escapeXml(config.title)}</h1>\n      <p class="title-page__author">${escapeXml(authorName(config.author))}</p>\n    </div>\n    <p class="title-page__year">${escapeXml(year)}</p>\n  </section>`;
+  const tocPage = middleHtmlToc(chapters, tocTitle, tocFormat);
+  const chapterClass = settings.chapterPageBreak === false ? 'book-content' : 'book-content book-content--chapter-breaks';
+  const chapterHtml = chapters.map(chapter => `    <section class="chapter" id="${chapter.id}">\n      <h1>${escapeXml(chapter.title)}</h1>\n${toMiddleHtml(chapter.text, manuscript.footnoteNumbers, images)}\n    </section>`).join('\n');
+  const notes = middleHtmlNotes();
+
+  const html = `<!doctype html>\n<html lang="${escapeXml(language)}">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>${escapeXml(config.title)}</title>\n  <style>\n${stylesheet}\n  </style>\n</head>\n<body>\n${titlePage}\n${tocPage}\n  <main class="${chapterClass}">\n${chapterHtml}\n  </main>${notes}\n</body>\n</html>\n`;
+
+  const path = join(outputDir, `${base}.middle.html`);
+  await writeFile(path, html, 'utf8');
+  console.log(`Middle HTML: ${path}`);
+}
+
+async function middleHtmlStyles(settings) {
+  const page = settings.page ?? {};
+  const pageRules = [page.size ? `size: ${page.size};` : '', `margin: ${page.margin ?? '20mm'};`].filter(Boolean).join(' ');
+  const defaults = `    @page { ${pageRules} }\n    :root { color-scheme: light; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; }\n    * { box-sizing: border-box; }\n    body { margin: 0; color: #111; background: #fff; }\n    .title-page { min-height: 100vh; display: flex; flex-direction: column; text-align: center; break-after: page; page-break-after: always; }\n    .title-page__main { margin: auto 0; }\n    .title-page h1 { margin: 0 0 1.25rem; font-size: 2.2rem; }\n    .title-page__author { margin: 0; font-size: 1.2rem; text-indent: 0; }\n    .title-page__year { margin: auto 0 0; text-indent: 0; }\n    .table-of-contents { break-after: page; page-break-after: always; }\n    .table-of-contents h1, .chapter > h1, .notes > h1 { text-align: center; }\n    .toc-list { padding: 0; list-style-position: inside; }\n    .toc-list--plain { list-style: none; }\n    .toc-list li, .toc-plain-entry { margin: 0.6em 0; }\n    .toc-list a, .toc-plain-entry a { color: inherit; text-decoration: none; }\n    .chapter + .chapter { margin-top: 3rem; }\n    .book-content--chapter-breaks .chapter + .chapter { break-before: page; page-break-before: always; margin-top: 0; }\n    p { margin: 0 0 0.7em; text-indent: 1.5em; }\n    pre { font-family: ui-monospace, "Cascadia Mono", monospace; white-space: pre-wrap; }\n    figure { margin: 1.5em auto; text-align: center; }\n    img { max-width: 100%; height: auto; }\n    hr.scene-break { width: 20%; margin: 1.75em auto; border: 0; border-top: 1px solid currentColor; }\n    .notes { break-before: page; page-break-before: always; }\n    .notes p { text-indent: 0; }\n    @media screen { body { max-width: 760px; margin: 0 auto; padding: 3rem; } }`;
+
+  if (!settings.stylesheet) return defaults;
+  const path = resolve(bookDir, normalizeAssetPath(settings.stylesheet));
+  if (!path.startsWith(bookDir + sep) && path !== bookDir) throw new Error(`Путь Middle HTML stylesheet выходит за пределы репозитория: ${settings.stylesheet}`);
+  return `${defaults}\n\n    /* Custom stylesheet */\n${await readFile(path, 'utf8')}`;
+}
+
+function middleHtmlToc(chapters, title, format) {
+  const links = chapters.map(chapter => `<a href="#${chapter.id}">${escapeXml(chapter.title)}</a>`);
+  let contents;
+  if (format === 'plain') contents = links.map(link => `    <p class="toc-plain-entry">${link}</p>`).join('\n');
+  else {
+    const tag = format === 'numbered' ? 'ol' : 'ul';
+    const modifier = format === 'numbered' ? 'toc-list--numbered' : 'toc-list--plain';
+    contents = `    <${tag} class="toc-list ${modifier}">\n${links.map(link => `      <li>${link}</li>`).join('\n')}\n    </${tag}>`;
+  }
+  return `  <nav class="table-of-contents" aria-labelledby="toc-title">\n    <h1 id="toc-title">${escapeXml(title)}</h1>\n${contents}\n  </nav>`;
+}
+
+function middleHtmlNotes() {
+  if (!manuscript.footnotes.length) return '';
+  const items = manuscript.footnotes.map(note => `    <aside class="footnote" id="note-${note.number}" role="doc-footnote">\n      <p><span>${note.number}.</span> ${renderMiddleHtmlInline(note.text, manuscript.footnoteNumbers)}</p>\n    </aside>`).join('\n');
+  return `\n  <section class="notes" role="doc-endnotes">\n    <h1>Примечания</h1>\n${items}\n  </section>`;
 }
 
 async function buildEpub() {
@@ -527,6 +581,72 @@ function renderEpubInline(text, footnoteNumbers) {
     else {
       const number = footnoteNumbers.get(match[6]);
       output += `<a epub:type="noteref" href="notes.xhtml#note-${number}">${number}</a>`;
+    }
+    cursor = match.index + match[0].length;
+  }
+
+  return output + escapeXml(text.slice(cursor));
+}
+
+function toMiddleHtml(text, footnoteNumbers, images) {
+  const output = [];
+  let inCode = false;
+  let codeLines = [];
+
+  for (const line of text.split('\n')) {
+    if (parseFenceLine(line)) {
+      if (inCode) {
+        output.push(`      <pre><code>${escapeXml(codeLines.map(normalizeCodeLine).join('\n'))}</code></pre>`);
+        codeLines = [];
+      }
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+    if (!line.trim()) continue;
+    if (line.trim() === '---') {
+      output.push('      <hr class="scene-break">');
+      continue;
+    }
+
+    const heading = parseHeadingLine(line);
+    if (heading) {
+      output.push(`      <h${heading.level}>${renderMiddleHtmlInline(heading.text, footnoteNumbers)}</h${heading.level}>`);
+      continue;
+    }
+
+    const image = parseImageLine(line);
+    if (image) {
+      if (isHttpUrl(image.path)) throw new Error(`Middle HTML не встраивает удалённое изображение: ${image.path}. Используйте путь к файлу в репозитории.`);
+      const loaded = images.get(normalizeAssetPath(image.path));
+      if (!loaded) throw new Error(`Изображение не загружено: ${image.path}`);
+      output.push(`      <figure><img src="data:${loaded.mime};base64,${loaded.data}" alt="${escapeXml(image.alt)}"></figure>`);
+      continue;
+    }
+
+    output.push(`      <p>${renderMiddleHtmlInline(line.trim(), footnoteNumbers)}</p>`);
+  }
+
+  return output.join('\n');
+}
+
+function renderMiddleHtmlInline(text, footnoteNumbers) {
+  const tokenPattern = /`([^`\n]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\[\^([^\]]+)\]/g;
+  let output = '';
+  let cursor = 0;
+
+  for (const match of text.matchAll(tokenPattern)) {
+    output += escapeXml(text.slice(cursor, match.index));
+    if (match[1] != null) output += `<code>${escapeXml(match[1])}</code>`;
+    else if (match[2] != null) output += `<strong>${renderMiddleHtmlInline(match[2], footnoteNumbers)}</strong>`;
+    else if (match[3] != null) output += `<em>${renderMiddleHtmlInline(match[3], footnoteNumbers)}</em>`;
+    else if (match[4] != null) output += `<a href="${escapeXml(match[5])}">${escapeXml(match[4])}</a>`;
+    else {
+      const number = footnoteNumbers.get(match[6]);
+      output += `<a role="doc-noteref" href="#note-${number}">${number}</a>`;
     }
     cursor = match.index + match[0].length;
   }
