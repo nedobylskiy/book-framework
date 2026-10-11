@@ -58,6 +58,7 @@ export async function validateBook(bookDir = getBookDir(), { readText = true } =
 
   validateFb2Metadata(config);
   validateEpubMetadata(config);
+  validateMiddleHtmlMetadata(config);
 
   const universe = resolveUniverse(config, bookDir);
 
@@ -143,6 +144,45 @@ function validateEpubMetadata(config) {
     }
     if (![translator.firstName, translator.middleName, translator.lastName, translator.nickname].some(Boolean)) {
       throw new Error(`У переводчика ${index + 1} в formats.epub.translators укажите имя, фамилию, отчество или nickname.`);
+    }
+  }
+}
+
+function validateMiddleHtmlMetadata(config) {
+  const settings = config.formats?.middleHtml ?? {};
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error('formats.middleHtml должен быть объектом.');
+  }
+  const language = settings.language ?? config.language;
+  if (language != null && (typeof language !== 'string' || !language.trim())) {
+    throw new Error('formats.middleHtml.language должен быть непустой строкой с кодом языка.');
+  }
+  if (settings.year != null && !['string', 'number'].includes(typeof settings.year)) {
+    throw new Error('formats.middleHtml.year должен быть строкой или числом.');
+  }
+  if (settings.chapterPageBreak != null && typeof settings.chapterPageBreak !== 'boolean') {
+    throw new Error('formats.middleHtml.chapterPageBreak должен быть true или false.');
+  }
+
+  const toc = settings.toc ?? {};
+  if (!toc || typeof toc !== 'object' || Array.isArray(toc)) {
+    throw new Error('formats.middleHtml.toc должен быть объектом.');
+  }
+  if (toc.title != null && (typeof toc.title !== 'string' || !toc.title.trim())) {
+    throw new Error('formats.middleHtml.toc.title должен быть непустой строкой.');
+  }
+  if (toc.format != null && !['list', 'numbered', 'plain'].includes(toc.format)) {
+    throw new Error('formats.middleHtml.toc.format должен быть list, numbered или plain.');
+  }
+
+  const page = settings.page ?? {};
+  if (!page || typeof page !== 'object' || Array.isArray(page)) {
+    throw new Error('formats.middleHtml.page должен быть объектом.');
+  }
+  const cssPageValue = /^[A-Za-z0-9.%\s-]+$/;
+  for (const field of ['size', 'margin']) {
+    if (page[field] != null && (typeof page[field] !== 'string' || !page[field].trim() || !cssPageValue.test(page[field]))) {
+      throw new Error(`formats.middleHtml.page.${field} содержит недопустимое CSS-значение.`);
     }
   }
 }

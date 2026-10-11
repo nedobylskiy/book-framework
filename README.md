@@ -31,6 +31,7 @@ npx book build
 npx book build --format txt
 npx book build --format fb2
 npx book build --format epub
+npx book build --format middle-html
 npx book build-chapters
 npx book build --format fb2 --chapters
 npx book new-chapter forest-meeting --title "Встреча в лесу"
@@ -46,6 +47,7 @@ CLI всегда работает с текущим каталогом книг�
   "scripts": {
     "build": "book build",
     "build:epub": "book build --format epub",
+    "build:middle-html": "book build --format middle-html",
     "build:chapters": "book build-chapters",
     "validate": "book validate",
     "chapter": "book new-chapter"
@@ -89,6 +91,7 @@ my-book/
     ├── my-book.txt
     ├── my-book.fb2
     ├── my-book.epub
+    ├── my-book.middle.html
     └── chapters/
         ├── 01-prologue.fb2
         └── 02-first-chapter.fb2
@@ -247,6 +250,19 @@ npx book universe
           "lastName": "Переводчика"
         }
       ]
+    },
+    "middleHtml": {
+      "year": 2026,
+      "toc": {
+        "title": "Содержание",
+        "format": "list"
+      },
+      "page": {
+        "size": "A4",
+        "margin": "20mm"
+      },
+      "chapterPageBreak": true,
+      "stylesheet": "assets/middle-html.css"
     }
   },
   "chapters": [
@@ -345,18 +361,43 @@ npx book universe
 
 Готовый файл рекомендуется проверять официальным EPUBCheck перед публикацией.
 
+## Настройки Middle HTML
+
+`book build --format middle-html` создаёт единый самодостаточный файл `dist/<имя>.middle.html` — промежуточное представление книги для будущей генерации PDF. Обычная команда `book build` также включает этот формат.
+
+Документ содержит:
+
+1. титульную страницу с названием и автором, а также годом у нижнего края;
+2. оглавление со ссылками на главы;
+3. текст глав без нумерации страниц;
+4. примечания, встроенные изображения и разделители сцен.
+
+`formats.middleHtml` поддерживает:
+
+- `year` — год на титульной странице; по умолчанию используется `formats.fb2.publish.year`, затем текущий год;
+- `language` — язык HTML; по умолчанию используется общее поле `language`;
+- `toc.title` — название оглавления, по умолчанию `Оглавление`;
+- `toc.format` — `list` для ненумерованного списка, `numbered` для нумерованного или `plain` для отдельных строк;
+- `page.size` — CSS-размер будущей страницы, например `A4`, `A5`, `Letter` или `210mm 297mm`; если поле не указано, размер определяет PDF-генератор;
+- `page.margin` — поля страницы, по умолчанию `20mm`;
+- `chapterPageBreak` — начинать каждую следующую главу с новой страницы, по умолчанию `true`;
+- `stylesheet` — дополнительный CSS-файл относительно корня книги. Он встраивается после базовых стилей и может переопределить размер страницы, поля и оформление без изменения HTML.
+
+Локальные изображения кодируются прямо в HTML как data URI, поэтому файл можно передавать PDF-генератору без каталога сопутствующих ресурсов. `---` создаёт тот же короткий центрированный `scene-break`, что и EPUB.
+
 ## Сборка
 
 ```sh
 book build
 ```
 
-Создаёт TXT, FB2 и EPUB в `dist/`.
+Создаёт TXT, FB2, EPUB и Middle HTML в `dist/`.
 
 ```sh
 book build --format txt
 book build --format fb2
 book build --format epub
+book build --format middle-html
 ```
 
 ### Отдельный FB2 для каждой главы
