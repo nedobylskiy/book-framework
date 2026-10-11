@@ -50,6 +50,7 @@ CLI всегда работает с текущим каталогом книг�
     "build:epub": "book build --format epub",
     "build:middle-html": "book build --format middle-html",
     "build:pdf": "book build --format pdf",
+    "build:docx": "book build --format docx",
     "build:chapters": "book build-chapters",
     "validate": "book validate",
     "chapter": "book new-chapter"
@@ -265,6 +266,16 @@ npx book universe
       },
       "chapterPageBreak": true,
       "stylesheet": "assets/middle-html.css"
+    },
+    "docx": {
+      "titlePage": true,
+      "year": 2026,
+      "widthCm": 21.59,
+      "heightCm": 27.94,
+      "marginCm": 2.54,
+      "font": "Times New Roman",
+      "fontSizePt": 12,
+      "chapterPageBreak": true
     }
   },
   "chapters": [
@@ -465,13 +476,30 @@ npx book universe
 
 Для GitHub Actions не требуется устанавливать системный Chrome: обычный `npm ci` устанавливает Puppeteer и его совместимый Chromium. После этого достаточно запустить `npx book build` или `npx book build --format pdf`. Если в CI используется кеш, кешируйте npm стандартным `actions/setup-node`, но не задавайте `PUPPETEER_SKIP_DOWNLOAD`.
 
+## Настройки DOCX
+
+`book build --format docx` создаёт редактируемый `dist/<имя>.docx`. В документ входят титульная страница, главы, вложенные заголовки, локальные изображения, ссылки, базовая строчная разметка, блоки кода, разделители сцен и раздел примечаний. Оглавление в DOCX пока не формируется.
+
+`formats.docx` поддерживает:
+
+- `titlePage` — добавлять титульную страницу, по умолчанию `true`;
+- `year` — год на титульной странице; по умолчанию используется `formats.fb2.publish.year`, затем текущий год;
+- `widthCm` и `heightCm` — ширина и высота страницы в сантиметрах; по умолчанию используется Letter (`21.59 × 27.94` см);
+- `marginCm` — одинаковые поля со всех сторон, по умолчанию `2.54` см;
+- `font` — основной шрифт, по умолчанию `Times New Roman`; шрифт должен быть установлен в системе, где открывается документ;
+- `fontSizePt` — размер основного текста в пунктах, по умолчанию `12`;
+- `chapterPageBreak` — начинать главы с новой страницы, по умолчанию `true`;
+- `language` — язык документа; по умолчанию используется общее поле `language`.
+
+DOCX использует те же исходные главы и разметку, что остальные форматы. Локальные JPG, JPEG и PNG встраиваются внутрь документа. Разрыв сцены `---` преобразуется в центрированный знак `* * *`. Ссылки на сноски выводятся верхним индексом, а сами примечания — отдельным разделом в конце документа.
+
 ## Сборка
 
 ```sh
 book build
 ```
 
-Создаёт TXT, FB2, EPUB, Middle HTML и PDF в `dist/`.
+Создаёт TXT, FB2, EPUB, Middle HTML, PDF и DOCX в `dist/`.
 
 ```sh
 book build --format txt
@@ -479,6 +507,7 @@ book build --format fb2
 book build --format epub
 book build --format middle-html
 book build --format pdf
+book build --format docx
 ```
 
 ### Отдельный FB2 для каждой главы

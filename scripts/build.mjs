@@ -3,6 +3,18 @@ import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, extname, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {
+  AlignmentType,
+  Document,
+  ExternalHyperlink,
+  HeadingLevel,
+  ImageRun,
+  Packer,
+  Paragraph,
+  SectionType,
+  TextRun
+} from 'docx';
+import { imageSize } from 'image-size';
 import puppeteer from 'puppeteer';
 import yazl from 'yazl';
 import { authorName, escapeXml, loadBook } from './lib.mjs';
@@ -15,7 +27,7 @@ const { bookDir, config, chapters, outputDir } = await loadBook();
 const base = config.outputBaseName ?? config.id ?? 'book';
 const manuscript = prepareManuscript(chapters);
 
-if (!['all', 'txt', 'fb2', 'epub', 'middle-html', 'pdf'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
+if (!['all', 'txt', 'fb2', 'epub', 'middle-html', 'pdf', 'docx'].includes(format)) throw new Error(`Неизвестный формат: ${format}`);
 if (chaptersMode && !['all', 'fb2'].includes(format)) throw new Error('--chapters поддерживается только для FB2.');
 
 if (!chaptersMode && (format === 'all' || format === 'txt')) await buildTxt();
@@ -26,6 +38,7 @@ if (format === 'all' || format === 'fb2') {
 if (!chaptersMode && (format === 'all' || format === 'epub')) await buildEpub();
 if (!chaptersMode && format === 'middle-html') await buildMiddleHtml();
 if (!chaptersMode && (format === 'all' || format === 'pdf')) await buildPdf();
+if (!chaptersMode && (format === 'all' || format === 'docx')) await buildDocx();
 
 async function buildTxt() {
   const settings = config.formats?.txt ?? {};
@@ -51,6 +64,179 @@ async function buildTxt() {
   const path = join(outputDir, `${base}.txt`);
   await writeFile(path, parts.join(lineEnding) + lineEnding, 'utf8');
   console.log(`TXT: ${path}`);
+}
+
+async function buildDocx() {
+  const settings = config.formats?.docx ?? {};
+  const titlePage = settings.titlePage ?? true;
+  const chapterPageBreak = settings.chapterPageBreak ?? true;
+  const font = settings.font ?? 'Times New Roman';
+  const fontSizePt = settings.fontSizePt ?? 12;
+  const widthCm = settings.widthCm ?? 21.59;
+  const heightCm = settings.heightCm ?? 27.94;
+  const marginCm = settings.marginCm ?? 2.54;
+  const year = settings.year ?? config.formats?.fb2?.publish?.year ?? new Date().getFullYear();
+  const images = await loadBodyImages(manuscript.chapters);
+  const chapterGroups = manuscript.chapters.map(chapter => [
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 1440, after: 360 },
+      children: [new TextRun({ text: chapter.title, font, size: 32, bold: true, color: '000000' })]
+    }),
+    ...docxBody(chapter.text, manuscript.footnoteNumbers, images, { font, fontSizePt, widthCm, marginCm })
+  ]);
+
+  const notesChildren = [];
+  if (manuscript.footnotes.length) {
+    notesChildren.push(new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun({ text: 'Примечания', font, size: 32, bold: true, color: '000000' })]
+    }));
+    for (const note of manuscript.footnotes) {
+      notesChildren.push(new Paragraph({
+        spacing: { after: 120 },
+        children: [new TextRun({ text: `${note.number}. `, font, size: fontSizePt * 2, bold: true }), ...docxInlineRuns(note.text, manuscript.footnoteNumbers, { font, fontSizePt })]
+      }));
+    }
+  }
+
+  const page = {
+    size: { width: cmToTwips(widthCm), height: cmToTwips(heightCm) },
+    margin: { top: cmToTwips(marginCm), right: cmToTwips(marginCm), bottom: cmToTwips(marginCm), left: cmToTwips(marginCm) }
+  };
+  const sections = [];
+  if (titlePage) sections.push({ properties: { page }, children: docxTitlePage({ font, year }) });
+  if (chapterPageBreak) {
+    for (const children of chapterGroups) sections.push({ properties: { type: SectionType.NEXT_PAGE, page }, children });
+  } else {
+    sections.push({ properties: { type: titlePage ? SectionType.NEXT_PAGE : undefined, page }, children: chapterGroups.flat() });
+  }
+  if (notesChildren.length) sections.push({ properties: { type: SectionType.NEXT_PAGE, page }, children: notesChildren });
+
+  const document = new Document({
+    creator: authorName(config.author),
+    title: config.title,
+    description: config.annotation ?? '',
+    language: settings.language ?? config.language ?? 'ru',
+    styles: { default: { document: { run: { font, size: fontSizePt * 2, color: '000000' } } } },
+    sections
+  });
+
+  const path = join(outputDir, `${base}.docx`);
+  await writeFile(path, await Packer.toBuffer(document));
+  console.log(`DOCX: ${path}`);
+}
+
+function docxTitlePage({ font, year }) {
+  return [
+    new Paragraph({
+      style: 'Title',
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 3600, after: 480 },
+      children: [new TextRun({ text: config.title, font, size: 48, bold: true, color: '000000' })]
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun({ text: authorName(config.author), font, size: 28, color: '000000' })]
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 3600 },
+      children: [new TextRun({ text: String(year), font, size: 24, color: '000000' })]
+    })
+  ];
+}
+
+function docxBody(text, footnoteNumbers, images, settings) {
+  const output = [];
+  let inCode = false;
+
+  for (const line of text.split('\n')) {
+    if (parseFenceLine(line)) {
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) {
+      output.push(new Paragraph({
+        spacing: { after: 0 },
+        children: [new TextRun({ text: normalizeCodeLine(line) || ' ', font: 'Courier New', size: Math.max(16, settings.fontSizePt * 2 - 2) })]
+      }));
+      continue;
+    }
+    if (!line.trim()) continue;
+    if (line.trim() === '---') {
+      output.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 240, after: 240 },
+        children: [new TextRun({ text: '* * *', font: settings.font, size: settings.fontSizePt * 2 })]
+      }));
+      continue;
+    }
+
+    const heading = parseHeadingLine(line);
+    if (heading) {
+      const levels = { 2: HeadingLevel.HEADING_2, 3: HeadingLevel.HEADING_3, 4: HeadingLevel.HEADING_4, 5: HeadingLevel.HEADING_5, 6: HeadingLevel.HEADING_6 };
+      output.push(new Paragraph({
+        heading: levels[heading.level],
+        spacing: { before: 240, after: 160 },
+        children: docxInlineRuns(heading.text, footnoteNumbers, settings)
+      }));
+      continue;
+    }
+
+    const image = parseImageLine(line);
+    if (image) {
+      if (isHttpUrl(image.path)) throw new Error(`DOCX не встраивает удалённое изображение: ${image.path}. Используйте путь к файлу в репозитории.`);
+      const loaded = images.get(normalizeAssetPath(image.path));
+      if (!loaded) throw new Error(`Изображение не загружено: ${image.path}`);
+      const dimensions = imageSize(loaded.buffer);
+      const maxWidth = Math.max(96, (settings.widthCm - settings.marginCm * 2) / 2.54 * 96);
+      const scale = Math.min(1, maxWidth / dimensions.width);
+      output.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 160, after: 160 },
+        children: [new ImageRun({
+          data: loaded.buffer,
+          type: loaded.mime === 'image/png' ? 'png' : 'jpg',
+          transformation: { width: Math.round(dimensions.width * scale), height: Math.round(dimensions.height * scale) },
+          altText: { title: image.alt || 'Иллюстрация', description: image.alt || 'Иллюстрация', name: image.alt || 'Иллюстрация' }
+        })]
+      }));
+      continue;
+    }
+
+    output.push(new Paragraph({
+      alignment: AlignmentType.JUSTIFIED,
+      indent: { firstLine: 432 },
+      spacing: { after: 120, line: 276 },
+      children: docxInlineRuns(line.trim(), footnoteNumbers, settings)
+    }));
+  }
+  return output;
+}
+
+function docxInlineRuns(text, footnoteNumbers, settings, inherited = {}) {
+  const tokenPattern = /`([^`\n]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\[\^([^\]]+)\]/g;
+  const output = [];
+  let cursor = 0;
+  const run = value => new TextRun({ text: value, font: settings.font, size: settings.fontSizePt * 2, color: '000000', ...inherited });
+
+  for (const match of text.matchAll(tokenPattern)) {
+    if (match.index > cursor) output.push(run(text.slice(cursor, match.index)));
+    if (match[1] != null) output.push(new TextRun({ text: match[1], font: 'Courier New', size: Math.max(16, settings.fontSizePt * 2 - 2), color: '000000', ...inherited }));
+    else if (match[2] != null) output.push(...docxInlineRuns(match[2], footnoteNumbers, settings, { ...inherited, bold: true }));
+    else if (match[3] != null) output.push(...docxInlineRuns(match[3], footnoteNumbers, settings, { ...inherited, italics: true }));
+    else if (match[4] != null) output.push(new ExternalHyperlink({ children: [new TextRun({ text: match[4], font: settings.font, size: settings.fontSizePt * 2, color: '0563C1', underline: {} })], link: match[5] }));
+    else output.push(new TextRun({ text: String(footnoteNumbers.get(match[6])), font: settings.font, size: Math.max(14, settings.fontSizePt * 2 - 4), superScript: true, color: '000000' }));
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) output.push(run(text.slice(cursor)));
+  return output;
+}
+
+function cmToTwips(value) {
+  return Math.round(value / 2.54 * 1440);
 }
 
 async function buildFb2() {
@@ -999,10 +1185,11 @@ async function loadImage(relativePath, kind = 'image') {
   const mime = extension === '.png' ? 'image/png' : ['.jpg', '.jpeg'].includes(extension) ? 'image/jpeg' : null;
   if (!mime) throw new Error(`FB2 поддерживает изображения PNG, JPG или JPEG: ${relativePath}`);
 
-  const data = (await readFile(path)).toString('base64');
+  const buffer = await readFile(path);
+  const data = buffer.toString('base64');
   const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 12);
   const normalizedExt = extension === '.jpeg' ? '.jpg' : extension;
-  return { id: kind === 'cover' ? `cover${normalizedExt}` : `image-${hash}${normalizedExt}`, mime, data, path: normalized };
+  return { id: kind === 'cover' ? `cover${normalizedExt}` : `image-${hash}${normalizedExt}`, mime, data, buffer, path: normalized };
 }
 
 function normalizeAssetPath(value) {

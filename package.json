@@ -1,6 +1,6 @@
 {
   "name": "@nedobylskiy/book-framework",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "CLI framework for writing, editing, validating and building book repositories",
   "type": "module",
   "bin": {
@@ -21,6 +21,7 @@
     "build:epub": "node bin/book.mjs build --format epub",
     "build:middle-html": "node bin/book.mjs build --format middle-html",
     "build:pdf": "node bin/book.mjs build --format pdf",
+    "build:docx": "node bin/book.mjs build --format docx",
     "validate": "node bin/book.mjs validate"
   },
   "keywords": [
@@ -28,6 +29,7 @@
     "writing",
     "fb2",
     "epub",
+    "docx",
     "html",
     "publishing",
     "cli",
@@ -37,6 +39,8 @@
   "license": "UNLICENSED",
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",
+    "docx": "^9.10.0",
+    "image-size": "^2.0.4",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.4.299",
     "puppeteer": "^25.13.0",

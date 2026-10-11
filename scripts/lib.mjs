@@ -60,6 +60,7 @@ export async function validateBook(bookDir = getBookDir(), { readText = true } =
   validateEpubMetadata(config);
   validateMiddleHtmlMetadata(config);
   validatePdfMetadata(config);
+  validateDocxMetadata(config);
 
   const universe = resolveUniverse(config, bookDir);
 
@@ -257,6 +258,40 @@ function validatePdfMetadata(config) {
   }
   if (footerBottom >= height) {
     throw new Error('formats.pdf.footerBottomCm должен быть меньше высоты страницы.');
+  }
+}
+
+function validateDocxMetadata(config) {
+  const settings = config.formats?.docx ?? {};
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error('formats.docx должен быть объектом.');
+  }
+  for (const field of ['titlePage', 'chapterPageBreak']) {
+    if (settings[field] != null && typeof settings[field] !== 'boolean') {
+      throw new Error(`formats.docx.${field} должен быть true или false.`);
+    }
+  }
+  for (const field of ['widthCm', 'heightCm', 'fontSizePt']) {
+    if (settings[field] != null && (typeof settings[field] !== 'number' || !Number.isFinite(settings[field]) || settings[field] <= 0)) {
+      throw new Error(`formats.docx.${field} должен быть положительным числом.`);
+    }
+  }
+  if (settings.marginCm != null && (typeof settings.marginCm !== 'number' || !Number.isFinite(settings.marginCm) || settings.marginCm < 0)) {
+    throw new Error('formats.docx.marginCm должен быть неотрицательным числом.');
+  }
+  for (const field of ['font', 'language']) {
+    if (settings[field] != null && (typeof settings[field] !== 'string' || !settings[field].trim())) {
+      throw new Error(`formats.docx.${field} должен быть непустой строкой.`);
+    }
+  }
+  if (settings.year != null && !['string', 'number'].includes(typeof settings.year)) {
+    throw new Error('formats.docx.year должен быть строкой или числом.');
+  }
+  const width = settings.widthCm ?? 21.59;
+  const height = settings.heightCm ?? 27.94;
+  const margin = settings.marginCm ?? 2.54;
+  if (margin * 2 >= Math.min(width, height)) {
+    throw new Error('formats.docx.marginCm должен оставлять положительную область страницы.');
   }
 }
 
