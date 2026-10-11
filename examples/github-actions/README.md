@@ -21,7 +21,7 @@ Workflow:
 1. устанавливает Node.js;
 2. выполняет `npm ci`;
 3. запускает `book validate`;
-4. собирает TXT/FB2 через `book build`;
+4. собирает TXT/FB2/EPUB через `book build`;
 5. собирает отдельные FB2 глав через `book build-chapters`;
 6. сохраняет весь `dist/` как GitHub Actions artifact.
 

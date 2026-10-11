@@ -57,6 +57,7 @@ export async function validateBook(bookDir = getBookDir(), { readText = true } =
   }
 
   validateFb2Metadata(config);
+  validateEpubMetadata(config);
 
   const universe = resolveUniverse(config, bookDir);
 
@@ -115,6 +116,33 @@ function validateFb2Metadata(config) {
     }
     if (![translator.firstName, translator.middleName, translator.lastName, translator.nickname].some(Boolean)) {
       throw new Error(`У переводчика ${index + 1} укажите имя, фамилию, отчество или nickname.`);
+    }
+  }
+}
+
+function validateEpubMetadata(config) {
+  const settings = config.formats?.epub ?? {};
+  const language = settings.language ?? config.language;
+  if (language != null && (typeof language !== 'string' || !language.trim())) {
+    throw new Error('formats.epub.language должен быть непустой строкой с кодом языка.');
+  }
+  for (const field of ['titlePage', 'tableOfContents']) {
+    if (settings[field] != null && typeof settings[field] !== 'boolean') {
+      throw new Error(`formats.epub.${field} должен быть true или false.`);
+    }
+  }
+  if (settings.subjects != null && (!Array.isArray(settings.subjects) || settings.subjects.some(subject => typeof subject !== 'string' || !subject.trim()))) {
+    throw new Error('formats.epub.subjects должен быть массивом непустых строк.');
+  }
+  if (settings.translators != null && !Array.isArray(settings.translators)) {
+    throw new Error('formats.epub.translators должен быть массивом.');
+  }
+  for (const [index, translator] of (settings.translators ?? []).entries()) {
+    if (!translator || typeof translator !== 'object' || Array.isArray(translator)) {
+      throw new Error(`Переводчик ${index + 1} в formats.epub.translators должен быть объектом.`);
+    }
+    if (![translator.firstName, translator.middleName, translator.lastName, translator.nickname].some(Boolean)) {
+      throw new Error(`У переводчика ${index + 1} в formats.epub.translators укажите имя, фамилию, отчество или nickname.`);
     }
   }
 }
