@@ -201,7 +201,7 @@ function validatePdfMetadata(config) {
   if (settings.marginCm != null && (typeof settings.marginCm !== 'number' || !Number.isFinite(settings.marginCm) || settings.marginCm < 0)) {
     throw new Error('formats.pdf.marginCm должен быть неотрицательным числом.');
   }
-  for (const field of ['includeCover', 'pageNumbers']) {
+  for (const field of ['includeCover', 'pageNumbers', 'contents']) {
     if (settings[field] != null && typeof settings[field] !== 'boolean') {
       throw new Error(`formats.pdf.${field} должен быть true или false.`);
     }
@@ -217,6 +217,15 @@ function validatePdfMetadata(config) {
   }
   if (settings.pageNumberAlignment != null && !['center', 'outer'].includes(settings.pageNumberAlignment)) {
     throw new Error('formats.pdf.pageNumberAlignment должен быть center или outer.');
+  }
+  if (settings.contentsPosition != null && !['start', 'end'].includes(settings.contentsPosition)) {
+    throw new Error('formats.pdf.contentsPosition должен быть start или end.');
+  }
+  if (settings.emptyPages != null && (!Array.isArray(settings.emptyPages) || settings.emptyPages.some(page => !Number.isInteger(page) || page < 1))) {
+    throw new Error('formats.pdf.emptyPages должен быть массивом положительных целых номеров страниц.');
+  }
+  if (settings.emptyPages != null && new Set(settings.emptyPages).size !== settings.emptyPages.length) {
+    throw new Error('formats.pdf.emptyPages не должен содержать повторяющиеся номера страниц.');
   }
   for (const field of ['bodyFont', 'pageNumberFont', 'fontStylesheet']) {
     if (settings[field] != null && (typeof settings[field] !== 'string' || !settings[field].trim())) {
